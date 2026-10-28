@@ -10,6 +10,7 @@ const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.localClippingEnabled = true;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, 1, 0.05, 900);
 
@@ -340,7 +341,7 @@ function step(dt) {
   g.kickCooldown -= dt;
   g.flicked -= dt;
   closeControl(dt);
-  bodyBlock();
+  bodyCollide();
 
   ball.step(dt, world.cones);
   for (const e of ball.events) {
@@ -410,9 +411,46 @@ function closeControl(dt) {
   ball.controlled = true;
 }
 
-// keep the ball from passing through the player's legs
+// Loose balls bounce off whatever part of the body they hit. The response uses the
+// limb's own velocity, so a swinging leg or a rising head sends the ball away, and
+// friction across the contact puts spin on it.
+const BODY_BOUNCE = { head: 0.6, chest: 0.3, body: 0.3, thigh: 0.42, shin: 0.48, foot: 0.5, arm: 0.35 };
+const _ab = new THREE.Vector3(), _c = new THREE.Vector3(), _n = new THREE.Vector3();
+const _vp = new THREE.Vector3(), _rel = new THREE.Vector3(), _t = new THREE.Vector3();
+function bodyCollide() {
+  if (g.skill || g.poss.has || g.juggling || ball.kinematic || g.kickCooldown > 0) return;
+  const cols = player.rig?.colliders;
+  if (!cols) return bodyBlock();
+  for (const c of cols) {
+    _ab.subVectors(c.b, c.a);
+    const t = THREE.MathUtils.clamp(_c.subVectors(ball.pos, c.a).dot(_ab) / Math.max(_ab.lengthSq(), 1e-8), 0, 1);
+    _c.copy(c.a).addScaledVector(_ab, t);
+    _n.subVectors(ball.pos, _c);
+    const d = _n.length(), min = R + c.r;
+    if (d >= min || d < 1e-6) continue;
+    _n.divideScalar(d);
+    ball.pos.copy(_c).addScaledVector(_n, min);
+    if (ball.pos.y < R) ball.pos.y = R;
+
+    // only part of a limb's swing reaches the ball (legs are not rigid), so running
+    // into it nudges it on instead of blasting it away
+    _vp.lerpVectors(c.va, c.vb, t).sub(player.vel).multiplyScalar(0.35).add(player.vel);
+    _rel.subVectors(ball.vel, _vp);
+    const vn = _rel.dot(_n);
+    if (vn >= 0) continue;
+    const e = BODY_BOUNCE[c.part];
+    _t.copy(_rel).addScaledVector(_n, -vn); // sliding across the contact
+    ball.vel.copy(_vp).addScaledVector(_t, 0.75).addScaledVector(_n, -vn * e);
+    ball.spin.addScaledVector(_c.crossVectors(_n, _t), 0.25 * 1.5 / R);
+    ball.onGround = false;
+    g.lastBump = c.part;
+    if (-vn > 2.5) hud.toast(`off the ${c.part}`, 0.6);
+  }
+}
+
+// fallback for the plain mannequin: keep the ball out of the player's legs
 function bodyBlock() {
-  if (g.skill || g.poss.has || ball.kinematic || ball.pos.y > 1.0 || ball.vel.y > 1) return;
+  if (ball.pos.y > 1.0 || ball.vel.y > 1) return;
   const dx = ball.pos.x - player.pos.x, dz = ball.pos.z - player.pos.z;
   const d = Math.hypot(dx, dz), min = 0.2 + R;
   if (d < min && d > 1e-5) {

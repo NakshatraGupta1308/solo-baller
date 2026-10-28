@@ -45,6 +45,10 @@ Opening `index.html` straight from disk won't work, because browsers block ES mo
 
 When the ball is at your feet a thin green ring appears under it. While you have it, the ball stays glued just ahead of your boot: small touches in rhythm with your steps when jogging, bigger touches when sprinting, and it stops under your sole when you stop. You only give it up when you pass, shoot, flick it or start juggling, and loose balls are collected as soon as they come within reach. Balls dropping from the air (like your own rainbow flick) are cushioned down to your feet.
 
+### Bumps and bounces
+
+A loose ball bounces off whatever part of you it hits: head, chest, thighs, shins, feet or arms. A moving limb passes some of its speed on, so running into a loose ball nudges it ahead, and glancing contacts put spin on it. On the ground the ball bounces like a real one on grass (a 2.5 m drop comes back up to about 1 m), with a slightly uneven turf feel and a little squash on landing.
+
 Skills chain into combos (up to x5) if you land the next one within a couple of seconds. Catch your own rainbow flick before it lands for a bonus. Goals score 500, and shots through the green rings in the top corners score 1000.
 
 ## How it's built
@@ -52,7 +56,8 @@ Skills chain into combos (up to x5) if you land the next one within a couple of 
 - [three.js](https://threejs.org) r170, vendored in `vendor/` so the game runs offline and on GitHub Pages without a bundler.
 - `src/shaders.js`: the graph-paper ground and sky, the procedural pitch (mowing stripes, line markings, a ragged grass edge) and instanced grass blades that wrap around the camera and bend away from the ball and the player.
 - `src/ball.js`: ball physics with gravity, quadratic drag, Magnus curl, dip and lift, and a contact friction spin model (a skidding ball grips and starts rolling, backspin checks up on the bounce, topspin kicks on). Plus rolling resistance on grass and goal frame and net collisions.
-- `src/player.js`: a procedural mannequin rig with a run cycle and pose overrides.
+- `src/player.js`: the procedural pose system (run cycle and skill pose overrides), with a simple mannequin as a fallback while the model loads.
+- `src/rig.js`: loads the rigged player model, paints a plain kit on it, retargets the pose system onto its Mixamo bones, builds bone-following capsules for ball collisions, and clips the upper body in first person.
 - `src/skills.js`: each skill's pose, ball path and release, plus the mouse gesture recogniser.
 - `src/main.js`: the fixed-step game loop, close control (a stride-synced spring that keeps the ball at your feet), first touch and cushioning, shooting, keepy-uppy, scoring and the camera.
 
@@ -66,6 +71,15 @@ The visual style (paper white, graph lines, a single green accent) is inspired b
 - Replay camera for clipping your best moves
 - More locations: street court, rooftop, beach, night stadium
 
+## Credits
+
+- Player model: the "X Bot" character from [Mixamo](https://www.mixamo.com), as distributed with the [three.js examples](https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf). The kit colours are applied in code.
+- [three.js](https://threejs.org) and its glTF loader, MIT licensed (see `vendor/three.LICENSE`).
+
+## Using your own player model
+
+Replace `assets/player.glb` with any humanoid rigged with Mixamo bone names (for example a character auto-rigged on mixamo.com, exported as FBX and converted to GLB). Only use models you have the rights to publish.
+
 ## License
 
-MIT. three.js is MIT licensed too (see `vendor/three.LICENSE`).
+MIT for the game code.

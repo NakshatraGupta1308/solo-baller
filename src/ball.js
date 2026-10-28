@@ -41,7 +41,11 @@ export function createBall(scene) {
   const mesh = new THREE.Mesh(ballGeometry(), new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.42, flatShading: false,
   }));
-  scene.add(mesh);
+  // the mesh spins inside a holder, so the holder can squash along world up on impact
+  const holder = new THREE.Group();
+  holder.add(mesh);
+  scene.add(holder);
+  let squash = 0, squashVel = 0;
 
   const ball = {
     radius: R,
@@ -97,8 +101,10 @@ export function createBall(scene) {
         this.pos.y = R;
         const vn = -v.y;
         if (vn > 0.9) {
-          const e = THREE.MathUtils.clamp(0.64 - 0.025 * vn, 0.42, 0.64); // softer on hard landings
+          // softer on hard landings, and a little uneven like real turf
+          const e = THREE.MathUtils.clamp(0.72 - 0.012 * vn, 0.5, 0.72) * (0.95 + Math.random() * 0.08);
           v.y = vn * e;
+          squashVel += Math.min(vn, 14) * 0.45;
           this.grip(MU_BOUNCE * vn * (1 + e));
           this.events.push({ type: 'bounce', speed: v.y });
         } else {
@@ -202,9 +208,15 @@ export function createBall(scene) {
         const q = new THREE.Quaternion().setFromAxisAngle(this.spin.clone().normalize(), ang);
         mesh.quaternion.premultiply(q);
       }
-      mesh.position.copy(this.pos);
+      // damped spring for the squash: flattens on impact and wobbles back
+      squashVel += (-420 * squash - 26 * squashVel) * dt;
+      squash = THREE.MathUtils.clamp(squash + squashVel * dt, -0.1, 0.2);
+      const s = squash;
+      holder.scale.set(1 + s * 0.5, 1 - s, 1 + s * 0.5);
+      holder.position.copy(this.pos);
+      holder.position.y -= s * R * (this.pos.y < R * 1.6 ? 1 : 0);
     },
   };
-  ball.mesh.position.copy(ball.pos);
+  holder.position.copy(ball.pos);
   return ball;
 }

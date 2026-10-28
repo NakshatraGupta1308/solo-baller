@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PALETTE } from './world.js';
+import { loadRig } from './rig.js';
 
 // A faceless mannequin in a green kit, posed procedurally.
 // Local +z is forward, local +x is the player's left.
@@ -114,6 +115,7 @@ export function createPlayer(scene) {
     time: 0,
     override: null, // pose function from the active skill
     bodyYaw: 0,
+    rig: null, // the loaded 3D model; the mannequin stands in until it arrives
 
     forward(out = new THREE.Vector3()) { return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); },
     left(out = new THREE.Vector3()) { return out.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)); },
@@ -122,7 +124,10 @@ export function createPlayer(scene) {
       return out.copy(this.pos).addScaledVector(l, lx).addScaledVector(f, lz).setY(this.pos.y + ly);
     },
 
-    setFirstPerson(fp) { for (const m of upper) m.visible = !fp; },
+    setFirstPerson(fp) {
+      for (const m of upper) m.visible = !fp;
+      this.rig?.setFirstPerson(fp);
+    },
 
     animate(dt) {
       this.time += dt;
@@ -154,6 +159,7 @@ export function createPlayer(scene) {
         for (const k in o) if (k !== 'w' && k in pose) pose[k] = THREE.MathUtils.lerp(pose[k], o[k], w);
       }
 
+      if (this.rig) this.rig.apply(pose);
       const [L, Rl] = legs;
       L.top.rotation.set(pose.hipL, 0, pose.hipLz);
       Rl.top.rotation.set(pose.hipR, 0, pose.hipRz);
@@ -172,7 +178,12 @@ export function createPlayer(scene) {
 
       root.position.copy(this.pos);
       root.rotation.y = this.yaw;
+      this.rig?.update(dt, this.pos.y);
     },
   };
+
+  loadRig('assets/player.glb', body)
+    .then((rig) => { player.rig = rig; pelvis.visible = false; })
+    .catch((err) => console.warn('player model failed to load, using the mannequin', err));
   return player;
 }
