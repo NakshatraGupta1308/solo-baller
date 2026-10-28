@@ -40,10 +40,11 @@ const g = {
   skill: null, skillKey: '', skillT: 0, skillState: null,
   anim: null, // short kick / juggle animations: { t, dur, pose }
   charge: null,
-  kickCooldown: 0, touchCooldown: 0, goalTimer: 0,
+  kickCooldown: 0, goalTimer: 0,
   juggling: false, juggles: 0, best: 0,
   score: 0, combo: 1, comboTimer: 0,
   flicked: 0, escape: 0,
+  poss: { has: false, regain: 0, show: 0, cushioned: false }, // close control: is the ball glued to your feet
   side: { stepover: 1, elastico: 1, roulette: 1, dragback: 1 },
 
   hdist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); },
@@ -51,6 +52,7 @@ const g = {
   // the ball counts as "at your feet" anywhere in a strip just ahead of the player,
   // so skills still work between dribble touches
   ballAtFeet(scale = 1) {
+    if (this.poss.has) return true;
     if (ball.inNet || ball.kinematic || ball.pos.y > 0.5) return false;
     const d = tmp2.subVectors(ball.pos, player.pos);
     const lz = d.x * Math.sin(player.yaw) + d.z * Math.cos(player.yaw);
@@ -90,6 +92,7 @@ function startSkill(key, side) {
   const d = tmp.subVectors(ball.pos, player.pos);
   g.holdFrom = new THREE.Vector3(d.dot(player.left()), ball.pos.y - player.pos.y, d.dot(player.forward()));
   g.skillState = def.start(g, side);
+  g.poss.has = false;
   g.charge = null; hud.setCharge(null);
 }
 
@@ -102,7 +105,7 @@ function kick(hold) {
   if (!cam.fp) player.yaw = aimYaw;
   const f = player.forward();
   const contact = player.pos.clone().addScaledVector(f, 0.42);
-  const reach = g.hdist(ball.pos, contact) < 0.9 && ball.pos.y < 1.0 && !ball.kinematic && !ball.inNet;
+  const reach = g.poss.has || (g.hdist(ball.pos, contact) < 0.9 && ball.pos.y < 1.0 && !ball.kinematic && !ball.inNet);
   const c = Math.min(hold / 0.9, 1);
   g.anim = { t: 0, dur: 0.38, pose: kickPose(hold < 0.16 ? 0.5 : 0.7 + 0.3 * c) };
   if (!reach) { hud.toast('too far from the ball', 0.8); return; }
@@ -117,7 +120,12 @@ function kick(hold) {
   const dir = new THREE.Vector3(Math.sin(aimYaw) * Math.cos(elev), Math.sin(elev), Math.cos(aimYaw) * Math.cos(elev));
   ball.vel.copy(dir).multiplyScalar(speed).addScaledVector(player.vel, 0.25);
   if (ball.pos.y < R + 0.02) ball.pos.y = R + 0.01;
-  ball.spin.set(0, -strafeInput() * 13, 0);
+  // lofted shots get backspin (they float and check up), driven ones a little topspin (they dip);
+  // holding A or D adds sidespin to curl it
+  const top = elev > 0.28 ? -26 : hold < 0.16 ? 0 : 9 * c;
+  ball.spin.set(Math.cos(aimYaw) * top, -strafeInput() * 13, -Math.sin(aimYaw) * top);
+  ball.onGround = false;
+  g.poss.has = false; g.poss.regain = 0.45;
   g.kickCooldown = 0.35;
   if (g.juggling) endJuggle(true);
 }
@@ -138,9 +146,11 @@ function kickPose(power) {
 function startJuggle() {
   if (!g.ballAtFeet(0.6)) { hud.toast('get the ball at your feet first'); return; }
   g.juggling = true; g.juggles = 0;
+  g.poss.has = false;
   ball.kinematic = false;
   ball.vel.copy(player.vel).setY(3.6);
-  ball.pos.y = Math.max(ball.pos.y, R + 0.02);
+  ball.pos.copy(player.toWorld(-0.04, R + 0.02, 0.35));
+  ball.onGround = false;
   g.anim = { t: 0, dur: 0.28, pose: jugglePose('foot') };
   hud.setJuggle(true, 0);
   hud.toast('keepy-uppy: tap SPACE as the ball drops', 2.2);
@@ -242,7 +252,8 @@ input.on('key', (code) => {
 function resetBall() {
   if (g.juggling) endJuggle(false);
   ball.kinematic = false;
-  ball.place(player.toWorld(-0.04, R, 0.6));
+  ball.place(player.toWorld(-0.04, R, 0.45));
+  g.poss.has = true; g.poss.regain = 0;
   g.goalTimer = 0;
 }
 
@@ -262,26 +273,31 @@ function step(dt) {
   // movement (briefly hands-off after a skill so its burst of speed carries you after the ball)
   if (g.escape > 0) g.escape -= dt;
   else if (!g.skill) {
+    const sprinting = input.down('ShiftLeft') || input.down('ShiftRight');
     const fwd = (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
     const str = strafeInput();
     const cf = tmp.set(Math.sin(cam.yaw), 0, Math.cos(cam.yaw));
     const wish = new THREE.Vector3(-cf.z, 0, cf.x).multiplyScalar(str).addScaledVector(cf, fwd);
     if (wish.lengthSq() > 1) wish.normalize();
-    const max = g.juggling ? 2.2 : g.charge !== null ? 3.2 : input.down('ShiftLeft') || input.down('ShiftRight') ? 7.4 : 5.0;
+    const max = g.juggling ? 2.2 : g.charge !== null ? 3.2
+      : g.poss.has ? (sprinting ? 7.2 : 4.8) : (sprinting ? 7.6 : 5.2);
     const target = wish.multiplyScalar(max);
     const rate = target.lengthSq() > 0 ? 9 : 11;
     const k = 1 - Math.exp(-rate * dt);
     player.vel.x += (target.x - player.vel.x) * k;
     player.vel.z += (target.z - player.vel.z) * k;
+  }
 
-    // facing
+  // facing
+  if (!g.skill) {
     if (cam.fp) player.yaw = cam.yaw;
     else {
       const sp = Math.hypot(player.vel.x, player.vel.z);
       let want = null;
       if (g.charge !== null || g.juggling) want = cam.yaw;
       else if (sp > 0.4) want = Math.atan2(player.vel.x, player.vel.z);
-      if (want !== null) player.yaw += angleTo(player.yaw, want) * (1 - Math.exp(-12 * dt));
+      const rate = g.poss.has ? 9 : 12;
+      if (want !== null) player.yaw += angleTo(player.yaw, want) * (1 - Math.exp(-rate * dt));
     }
   }
 
@@ -308,8 +324,8 @@ function step(dt) {
         if (g.skillKey === 'rainbow') g.flicked = 1.8;
         award(def.points, def.name);
       } else hud.toast(`${def.name.toLowerCase()} (no ball)`, 0.8);
-      g.touchCooldown = 0.3;
-      g.escape = withBall && g.skillKey !== 'dragback' ? 0.35 : 0;
+      g.poss.regain = g.skillKey === 'rainbow' ? 0.45 : 0.1;
+      g.escape = withBall && g.skillKey !== 'dragback' ? 0.3 : 0;
     }
   }
 
@@ -322,9 +338,8 @@ function step(dt) {
   if (g.charge !== null) { g.charge += dt; hud.setCharge(Math.min(g.charge / 0.9, 1)); }
 
   g.kickCooldown -= dt;
-  g.touchCooldown -= dt;
   g.flicked -= dt;
-  if (!g.skill && !g.juggling && g.kickCooldown <= 0 && !ball.kinematic && !ball.inNet) control(dt);
+  closeControl(dt);
   bodyBlock();
 
   ball.step(dt, world.cones);
@@ -344,46 +359,60 @@ function step(dt) {
   hud.setCombo(g.combo, Math.max(g.comboTimer / 2.6, 0));
 }
 
-// Dribbling: small touches ahead while moving, settling the ball when standing,
-// and trapping balls that arrive fast or from the air.
-function control(dt) {
-  const f = player.forward(), l = player.left();
-  const front = g.front();
-  const d = g.hdist(ball.pos, front);
-  const relV = Math.hypot(ball.vel.x - player.vel.x, ball.vel.z - player.vel.z);
-
-  const chest = g.hdist(ball.pos, tmp.copy(player.pos).addScaledVector(f, 0.25));
-  if (ball.pos.y > 0.3 && ball.pos.y < 1.6 && chest < 0.6 && ball.vel.y < 0.5) {
-    ball.vel.set(player.vel.x * 0.9 + f.x * 0.8, 0.6, player.vel.z * 0.9 + f.z * 0.8);
-    g.touchCooldown = 0.25;
-    if (g.flicked > 0) { g.flicked = 0; award(150, 'Clean Control', 'rainbow complete'); }
-    else hud.toast('controlled', 0.6);
-    return;
-  }
-  if (ball.pos.y > 0.4 || d > 0.62) return;
-
-  if (relV > 5.5) {
-    ball.vel.set(player.vel.x + f.x * 0.6, 0, player.vel.z + f.z * 0.6);
-    g.touchCooldown = 0.2;
-    hud.toast('first touch', 0.6);
-    return;
-  }
+// Close control. While you have the ball a soft spring holds it just ahead of your
+// boot; the touch distance pulses with your stride and grows when sprinting. A loose
+// ball is collected when it comes within reach, and dropping balls are cushioned.
+function closeControl(dt) {
+  const poss = g.poss;
+  ball.controlled = false;
+  if (g.skill || g.juggling || ball.kinematic || ball.inNet) { poss.has = false; return; }
+  poss.regain -= dt;
+  const f = player.forward();
   const sp = player.speed;
-  if (sp > 0.8) {
-    if (g.touchCooldown > 0) return;
-    const lat = tmp.subVectors(ball.pos, front).dot(l);
-    const push = 1.1 + sp * 0.2;
-    ball.vel.set(player.vel.x + f.x * push - l.x * lat * 4, 0, player.vel.z + f.z * push - l.z * lat * 4);
-    g.touchCooldown = 0.32 - Math.min(sp, 7) * 0.015;
-  } else {
-    ball.vel.x = player.vel.x + (front.x - ball.pos.x) * 3;
-    ball.vel.z = player.vel.z + (front.z - ball.pos.z) * 3;
+
+  if (!poss.has) {
+    if (poss.regain > 0 || g.kickCooldown > 0) return;
+    const chest = g.hdist(ball.pos, tmp.copy(player.pos).addScaledVector(f, 0.25));
+    if (ball.onGround) poss.cushioned = false;
+    if (!poss.cushioned && ball.pos.y > 0.3 && ball.pos.y < 1.7 && chest < 0.6 && ball.vel.y < -1) {
+      // kill the pace once and let it drop onto the foot
+      poss.cushioned = true;
+      ball.vel.set(player.vel.x + f.x * 0.4, -0.5, player.vel.z + f.z * 0.4);
+      ball.spin.set(0, 0, 0);
+      poss.regain = 0.12;
+      if (g.flicked > 0) { g.flicked = 0; award(150, 'Clean Control', 'rainbow complete'); }
+      else hud.toast('cushioned', 0.6);
+      return;
+    }
+    const d = g.hdist(ball.pos, g.front(tmp2));
+    const relV = Math.hypot(ball.vel.x - player.vel.x, ball.vel.z - player.vel.z);
+    const reach = 0.7 + Math.min(sp, 7) * 0.05;
+    if (ball.pos.y > 0.45 || d > reach || relV > 14) return;
+    poss.has = true;
+    poss.cushioned = false;
+    if (relV > 6) hud.toast('first touch', 0.6);
   }
+
+  const jog = Math.min(sp / 5, 1);
+  const sprint = THREE.MathUtils.clamp((sp - 5.2) / 2, 0, 1);
+  const stride = ((player.phase / Math.PI) % 1 + 1) % 1; // 0 at each footfall
+  const wave = Math.sin(Math.PI * stride);
+  const lz = 0.36 + 0.1 * jog + 0.5 * sprint + (0.04 + 0.08 * jog + 0.4 * sprint) * wave;
+  const lx = -0.1 + (1 - jog) * 0.035 * Math.sin(player.time * 1.7); // idle sole roll
+  const target = player.toWorld(lx, R, lz, tmp);
+
+  const ex = target.x - ball.pos.x, ez = target.z - ball.pos.z;
+  if (Math.hypot(ex, ez) > 1.6 || ball.pos.y > 0.6) { poss.has = false; poss.regain = 0.3; return; }
+  const kp = 95 - 40 * sprint, kd = 1.8 * Math.sqrt(kp);
+  ball.vel.x += (kp * ex + kd * (player.vel.x - ball.vel.x)) * dt;
+  ball.vel.z += (kp * ez + kd * (player.vel.z - ball.vel.z)) * dt;
+  if (ball.vel.y > 0) ball.vel.y *= 0.5;
+  ball.controlled = true;
 }
 
 // keep the ball from passing through the player's legs
 function bodyBlock() {
-  if (g.skill || ball.kinematic || ball.pos.y > 1.0 || ball.vel.y > 1) return;
+  if (g.skill || g.poss.has || ball.kinematic || ball.pos.y > 1.0 || ball.vel.y > 1) return;
   const dx = ball.pos.x - player.pos.x, dz = ball.pos.z - player.pos.z;
   const d = Math.hypot(dx, dz), min = 0.2 + R;
   if (d < min && d > 1e-5) {
@@ -432,6 +461,8 @@ function frame() {
   while (acc >= FIXED) { step(FIXED); acc -= FIXED; }
   player.animate(dt);
   updateCamera(dt);
+  g.poss.show += ((g.poss.has ? 1 : 0) - g.poss.show) * (1 - Math.exp(-10 * dt));
+  world.shared.uPossess.value = g.poss.show;
   world.update(dt, camera, ball, player);
   hud.update(dt);
   renderer.render(scene, camera);

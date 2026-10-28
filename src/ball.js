@@ -6,8 +6,10 @@ const R = 0.11;
 const AIR_DRAG = 0.010; // quadratic, per metre
 const ROLL_DECEL = 1.3; // m/s^2 on grass
 const ROLL_DAMP = 0.28; // extra linear damping while rolling
-const BOUNCE = 0.55;
 const MAGNUS = 0.010;
+const MU_SLIDE = 0.45; // grass friction while the ball skids
+const MU_BOUNCE = 0.35; // grip during a bounce, scaled by the impact
+const SPIN_DECAY_AIR = 0.25;
 
 function ballGeometry() {
   // classic panel look: dark patches around the 12 icosahedron vertices
@@ -58,6 +60,7 @@ export function createBall(scene) {
       this.vel.copy(v ?? new THREE.Vector3());
       this.spin.set(0, 0, 0);
       this.inNet = false;
+      this.onGround = this.pos.y <= R + 1e-3;
     },
 
     // drive the ball directly (skills); velocity is derived so releasing is smooth
@@ -67,28 +70,36 @@ export function createBall(scene) {
       this.kinematic = true;
     },
 
+    controlled: false, // held at the player's feet; spin follows the roll
+
+    // rolling without slipping: angular velocity that matches the ground speed
+    rollSpin(out = this.spin) { return out.set(this.vel.z / R, out === this.spin ? this.spin.y : 0, -this.vel.x / R); },
+
     step(dt, cones) {
       this.lastPos.copy(this.pos);
-      if (this.kinematic) { this.rollVisual(dt, true); return; }
-      const v = this.vel;
+      if (this.kinematic) { this.rollSpin(); this.spinMesh(dt); return; }
+      const v = this.vel, w = this.spin;
       const speed = v.length();
 
-      // gravity, drag, magnus curl
+      // gravity, drag, magnus curl / dip / lift
       v.y -= G * dt;
       if (speed > 0.01) v.addScaledVector(v, -AIR_DRAG * speed * dt);
-      const curl = new THREE.Vector3().crossVectors(this.spin, v).multiplyScalar(MAGNUS);
-      if (!this.onGround) v.addScaledVector(curl, dt);
-      this.spin.multiplyScalar(Math.exp(-0.6 * dt));
+      if (!this.onGround) {
+        v.addScaledVector(new THREE.Vector3().crossVectors(w, v), MAGNUS * dt);
+        w.multiplyScalar(Math.exp(-SPIN_DECAY_AIR * dt));
+      }
 
       this.pos.addScaledVector(v, dt);
 
-      // ground
+      // ground contact: bounce, then friction at the contact point turns skid into roll
       this.onGround = false;
       if (this.pos.y <= R) {
         this.pos.y = R;
-        if (v.y < -0.9) {
-          v.y = -v.y * BOUNCE;
-          v.x *= 0.88; v.z *= 0.88;
+        const vn = -v.y;
+        if (vn > 0.9) {
+          const e = THREE.MathUtils.clamp(0.64 - 0.025 * vn, 0.42, 0.64); // softer on hard landings
+          v.y = vn * e;
+          this.grip(MU_BOUNCE * vn * (1 + e));
           this.events.push({ type: 'bounce', speed: v.y });
         } else {
           v.y = 0;
@@ -96,17 +107,34 @@ export function createBall(scene) {
         }
       }
       if (this.onGround) {
+        if (this.controlled) this.rollSpin();
+        else this.grip(MU_SLIDE * G * dt);
         const h = Math.hypot(v.x, v.z);
         if (h > 0) {
-          const dec = Math.min(h, (ROLL_DECEL + ROLL_DAMP * h) * dt);
-          v.x -= (v.x / h) * dec; v.z -= (v.z / h) * dec;
+          const k = Math.max(h - (ROLL_DECEL + ROLL_DAMP * h) * dt, 0) / h;
+          v.x *= k; v.z *= k; w.x *= k; w.z *= k;
         }
+        w.y *= Math.exp(-3 * dt);
       }
 
       this.collideGoal();
       for (const c of cones) this.collideCapsule(
         new THREE.Vector3(c.x, 0, c.z), new THREE.Vector3(c.x, c.h, c.z), c.r, 0.4);
-      this.rollVisual(dt, false);
+      this.spinMesh(dt);
+    },
+
+    // Friction impulse at the contact point, capped at maxJ (m/s). For a hollow
+    // sphere (I = 2/3 m R^2) a velocity change J shifts the slip by 2.5 J.
+    grip(maxJ) {
+      const v = this.vel, w = this.spin;
+      const ux = v.x + R * w.z, uz = v.z - R * w.x;
+      const u = Math.hypot(ux, uz);
+      if (u < 1e-6) return;
+      const j = Math.min(u / 2.5, maxJ);
+      const jx = (-ux / u) * j, jz = (-uz / u) * j;
+      v.x += jx; v.z += jz;
+      w.x += (1.5 / R) * -jz;
+      w.z += (1.5 / R) * jx;
     },
 
     collideCapsule(a, b, r, restitution) {
@@ -168,14 +196,10 @@ export function createBall(scene) {
       }
     },
 
-    rollVisual(dt, kinematic) {
-      // spin the mesh from travel (rolling) blended with any stored spin
-      const v = this.vel;
-      const roll = new THREE.Vector3(v.z, 0, -v.x).divideScalar(R);
-      const w = this.onGround || kinematic ? roll : roll.multiplyScalar(0.15).add(this.spin);
-      const ang = w.length() * dt;
+    spinMesh(dt) {
+      const ang = this.spin.length() * dt;
       if (ang > 1e-6) {
-        const q = new THREE.Quaternion().setFromAxisAngle(w.normalize(), ang);
+        const q = new THREE.Quaternion().setFromAxisAngle(this.spin.clone().normalize(), ang);
         mesh.quaternion.premultiply(q);
       }
       mesh.position.copy(this.pos);

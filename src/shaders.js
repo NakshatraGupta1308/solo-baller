@@ -92,7 +92,7 @@ varying vec3 vWorld;
 uniform vec3 uPaper, uInk, uAccent, uLine, uCam;
 uniform vec4 uBall;    // xyz, radius
 uniform vec4 uPlayer;  // xyz, facing yaw
-uniform float uFogNear, uFogFar;
+uniform float uFogNear, uFogFar, uPossess;
 ${NOISE}
 ${PITCH}
 float gridPx(vec2 p, float s, float px, vec2 fw) {
@@ -138,6 +138,11 @@ void main() {
   q = vec2(c * q.x - s * q.y, s * q.x + c * q.y) / vec2(0.36, 0.26);
   float sp = exp(-dot(q, q)) * 0.38 / (1.0 + uPlayer.y * 1.5);
   col *= (1.0 - sb) * (1.0 - sp);
+
+  // thin green ring under the ball while it is at your feet
+  float rd = abs(length(db) - 0.24);
+  float ring = (1.0 - smoothstep(0.012, 0.012 + aa, rd)) * uPossess * (1.0 - smoothstep(0.05, 0.3, h));
+  col = mix(col, uAccent, ring * 0.85);
 
   float dist = length(vWorld - uCam);
   col = mix(col, uPaper, smoothstep(uFogNear, uFogFar, dist));

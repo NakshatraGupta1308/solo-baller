@@ -40,6 +40,7 @@ export function createWorld(scene) {
     uFogNear: { value: FOG_NEAR },
     uFogFar: { value: FOG_FAR },
     uTime: { value: 0 },
+    uPossess: { value: 0 },
   };
 
   scene.background = col(PALETTE.paper);
