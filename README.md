@@ -17,33 +17,54 @@ Opening `index.html` straight from disk won't work, because browsers block ES mo
 
 ## Controls
 
+Your two mouse buttons are your two feet: **left button = left foot, right button = right foot**. WASD runs. While a foot button is held, the mouse moves that foot instead of the camera.
+
 | Input | Action |
 |---|---|
-| `WASD` | Move (relative to the camera) |
+| `WASD` | Run (relative to the camera) |
 | `Shift` | Sprint |
-| Mouse | Look and aim (click the game to lock the pointer) |
-| Arrow keys | Look, if the pointer can't be locked |
-| Left click | Tap to pass, hold to charge a shot. Hold `A`/`D` as you release to curl it. Aim higher for a chip with backspin |
-| `Space` | Jump, or a juggle touch in keepy-uppy mode |
-| `V` | Toggle first / third person |
+| Mouse (no button held) | Look and aim (click the game to lock the pointer) |
+| Click a foot | Knock the ball on with that foot |
+| Hold a foot still, then release | Shot with that foot (the longer the hold, the harder). Bend the release stroke to curl it, aim higher for a chip |
+| Both buttons together | Keepy-uppy; then click a foot (or press `Space`) as the ball drops |
+| `F` | Free foot mode (see below) |
+| `V` | First / third person |
+| `K` | First person head motion: full, half, minimal |
 | `B` | Bring the ball back to your feet |
+| `G` | Keepy-uppy on / off |
 | `H` | Show / hide all controls |
 | Mouse wheel | Third person camera distance |
 
-### Skills
+### Foot strokes
 
-| Key | Gesture (hold right mouse and draw) | Skill |
-|---|---|---|
-| `Q` | zig-zag left and right | Step over |
-| `E` | swipe left or right | Elastico (goes the way you swipe) |
-| `R` | draw a circle | Roulette |
-| `F` | flick up | Rainbow flick |
-| `C` | pull down | Drag back |
-| `Z` | | La Croqueta (hold `A`/`D` to pick the side) |
-| `X` | | Cruyff turn (hold `A`/`D` to pick the side) |
-| `T` | | Sole roll (hold `A`/`D` to pick the side) |
-| `Y` | | Sombrero flick |
-| `G` | | Keepy-uppy mode |
+Hold a foot button and draw a short stroke. Outward means away from your body on that foot's side (right for the right foot).
+
+| Stroke | Move |
+|---|---|
+| Flick up | Pass with that foot (bend the stroke to curl it) |
+| Circle | Step over with that foot |
+| Half circle | Roulette (spins the way you draw it) |
+| Fast swipe outward | Elastico |
+| Fast swipe inward | La Croqueta |
+| Slow drag sideways | Sole roll |
+| Pull back | Drag back |
+| Down, then sideways (L shape) | Cruyff turn |
+| Down, then up | Rainbow flick |
+| Up, then down | Sombrero flick |
+
+Moves happen on the run: you keep your speed through them (only the drag back and the Cruyff turn stop you, as they should). A stroke drawn during the second half of a move cuts straight into the next one, and one drawn earlier is remembered and starts as soon as the current move ends.
+
+### Free foot
+
+Press `F` and your boot follows the mouse while you hold that foot's button. Push the ball with it, roll it, or move fast to lift the boot over the ball. A step over done by hand (the boot passes over the ball without touching it and lands on the other side) still scores.
+
+### Sound
+
+Every contact has its own synthesised sound, built live in the browser with no audio files: a soft tap for each dribble touch, a scuff for sole drags and rolls, a swish when the boot whips around the ball, a thump that grows with shot power, a thud on the grass, duller thuds off the head, chest and thighs, a metallic ring off the woodwork and a swish into the net. Sounds are panned and quieter with distance from the camera.
+
+### First person
+
+The camera rides the player's head, so you feel the real stride and every skill, damped so it never jerks. Only the head is hidden: look down and you see your shoulders, chest, legs and boots. The view leans into turns and strafes, widens a little when sprinting, and `K` turns the head motion down if it is too much.
 
 ### Animation
 
@@ -65,9 +86,11 @@ Skills chain into combos (up to x5) if you land the next one within a couple of 
 - `src/shaders.js`: the graph-paper ground and sky, the procedural pitch (mowing stripes, line markings, a ragged grass edge) and instanced grass blades that wrap around the camera and bend away from the ball and the player.
 - `src/ball.js`: ball physics with gravity, quadratic drag, Magnus curl, dip and lift, and a contact friction spin model (a skidding ball grips and starts rolling, backspin checks up on the bounce, topspin kicks on). Plus rolling resistance on grass and goal frame and net collisions.
 - `src/player.js`: the pose pipeline: two-bone leg IK, a planted-foot gait, skill and kick pose overrides, and joint smoothing, with a simple mannequin as a fallback while the model loads.
-- `src/rig.js`: loads the rigged player model, paints a plain kit on it, retargets the pose system onto its Mixamo bones, builds bone-following capsules for ball collisions, and clips the upper body in first person.
-- `src/skills.js`: each skill's ball path, spline foot paths for both feet, body motion and release, plus the mouse gesture recogniser.
-- `src/main.js`: the fixed-step game loop, close control (a stride-synced spring that keeps the ball at your feet), first touch and cushioning, shooting, keepy-uppy, scoring and the camera.
+- `src/rig.js`: loads the rigged player model, paints a plain kit on it, retargets the pose system onto its Mixamo bones, builds bone-following capsules for ball collisions, and provides the eye position for first person.
+- `src/skills.js`: each skill's ball path, spline foot paths for both feet, body motion, release and sound cues, plus a left/right pose mirror.
+- `src/footcontrol.js`: the per-foot stroke recogniser and free foot mode.
+- `src/audio.js`: synthesised sound effects (Web Audio).
+- `src/main.js`: the fixed-step game loop, mouse-foot wiring, skill chaining, close control (a stride-synced spring that keeps the ball at your feet), first touch and cushioning, shooting, keepy-uppy, scoring and the cameras.
 
 The visual style (paper white, graph lines, a single green accent) is inspired by graph-paper construction sheets.
 

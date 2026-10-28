@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import { createWorld } from './world.js';
 import { createBall } from './ball.js';
 import { createPlayer } from './player.js';
-import { SKILLS, recognize, track } from './skills.js';
+import { SKILLS, track, mirrorPose } from './skills.js';
 import { createInput } from './input.js';
 import { createHud } from './hud.js';
+import { recognizeFoot, createFreeFoot } from './footcontrol.js';
+import { initAudio, sfx } from './audio.js';
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -29,11 +31,13 @@ const input = createInput(canvas);
 const hud = createHud();
 
 const SENS = 0.0022;
-const PITCH = { third: -0.28, first: -0.55 };
+const PITCH = { third: -0.28, first: -0.48 };
+const CHARGE_DELAY = 0.2; // hold a foot button still this long to start charging a shot
+const BOB_LEVELS = [1, 0.5, 0.15]; // first person head motion: full, half, minimal
 const R = ball.radius;
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 
-const cam = { fp: false, yaw: Math.PI, pitch: PITCH.third, dist: 4.6, blend: 0, fov: 62 };
+const cam = { fp: false, yaw: Math.PI, pitch: PITCH.third, dist: 4.6, blend: 0, fov: 62, roll: 0, bob: 0, lastYaw: Math.PI };
 
 const g = {
   player, ball, cam,
@@ -46,8 +50,12 @@ const g = {
   score: 0, combo: 1, comboTimer: 0,
   flicked: 0, escape: 0,
   poss: { has: false, regain: 0, show: 0, cushioned: false }, // close control: is the ball glued to your feet
-  side: { stepover: 1, elastico: 1, roulette: 1, dragback: 1, croqueta: 1, cruyff: 1, soleroll: 1 },
   pendingKick: null,
+  queued: null,        // a move asked for mid-skill, started as soon as the current one allows
+  cue: 0,              // next sound cue of the running skill
+  press: { L: null, R: null }, // foot buttons held: { t, charged }
+  free: createFreeFoot(),
+  lastCyc: 0,
 
   hdist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); },
   front(out = new THREE.Vector3()) { return player.toWorld(-0.04, 0, 0.42, out); },
@@ -88,33 +96,55 @@ function award(points, title, sub) {
 
 // ---------------------------------------------------------------- actions
 function startSkill(key, side) {
-  if (!g.started || g.skill || g.juggling || g.pendingKick || ball.inNet) return;
+  if (!g.started || g.juggling || g.pendingKick || ball.inNet) return;
+  if (g.skill) {
+    // late in a move, cut straight into the next one; earlier, remember it for later
+    if (g.skillT > 0.55) finishSkill(); else { g.queued = [key, side]; return; }
+  }
   const def = SKILLS[key];
-  g.skill = def; g.skillKey = key; g.skillT = 0;
+  g.skill = def; g.skillKey = key; g.skillT = 0; g.cue = 0;
   const d = tmp.subVectors(ball.pos, player.pos);
   g.holdFrom = new THREE.Vector3(d.dot(player.left()), ball.pos.y - player.pos.y, d.dot(player.forward()));
   g.skillState = def.start(g, side);
+  g.skillState.fwd = Math.max(player.vel.dot(player.forward()), 0);
   g.poss.has = false;
   g.charge = null; hud.setCharge(null);
 }
 
-function nextSide(key) { g.side[key] *= -1; return g.side[key]; }
+function finishSkill() {
+  const def = g.skill, st = g.skillState, key = g.skillKey;
+  g.skill = null;
+  ball.kinematic = false;
+  const withBall = def.end(g, st);
+  if (withBall) {
+    if (key === 'rainbow' || key === 'sombrero') g.flicked = 1.8;
+    award(def.points, def.name);
+    sfx.skill(g.combo);
+  } else hud.toast(`${def.name.toLowerCase()} (no ball)`, 0.8);
+  g.poss.regain = key === 'rainbow' || key === 'sombrero' ? 0.45 : 0.08;
+  g.escape = withBall && !def.stopsPlayer ? 0.16 : 0;
+  if (g.queued) { const [k, sd] = g.queued; g.queued = null; startSkill(k, sd); }
+}
 
 function strafeInput() { return (input.down('KeyD') ? 1 : 0) - (input.down('KeyA') ? 1 : 0); }
 
-function kick(hold) {
+/**
+ * Strike the ball with one foot. opts: { pass, speed } for a pass, or { power 0..1 }
+ * for a shot; curl -1..1 bends it (positive curls right).
+ */
+function kick(side, opts) {
   const aimYaw = cam.yaw;
   if (!cam.fp) player.yaw = aimYaw;
   const f = player.forward();
   const contact = player.pos.clone().addScaledVector(f, 0.42);
   const reach = g.poss.has || (g.hdist(ball.pos, contact) < 0.9 && ball.pos.y < 1.0 && !ball.kinematic && !ball.inNet);
-  const c = Math.min(hold / 0.9, 1);
+  const c = opts.pass ? 0 : opts.power;
   const bz = THREE.MathUtils.clamp(player.toBody(ball.pos).z, 0.3, 0.6);
-  g.anim = { t: 0, dur: 0.38, pose: kickPose(hold < 0.16 ? 0.45 : 0.7 + 0.3 * c, bz) };
+  g.anim = { t: 0, dur: opts.pass ? 0.32 : 0.38, pose: kickPose(opts.pass ? 0.45 : 0.7 + 0.3 * c, bz), mirror: side === 'L' };
   if (!reach) { hud.toast('too far from the ball', 0.8); return; }
 
   let speed, elev;
-  if (hold < 0.16) { speed = 9.5; elev = 0.02; }
+  if (opts.pass) { speed = opts.speed; elev = 0.02; }
   else {
     speed = 11 + 19 * c;
     const base = cam.fp ? PITCH.first : PITCH.third;
@@ -122,12 +152,24 @@ function kick(hold) {
   }
   const dir = new THREE.Vector3(Math.sin(aimYaw) * Math.cos(elev), Math.sin(elev), Math.cos(aimYaw) * Math.cos(elev));
   // lofted shots get backspin (they float and check up), driven ones a little topspin (they dip);
-  // holding A or D adds sidespin to curl it
-  const top = elev > 0.28 ? -26 : hold < 0.16 ? 0 : 9 * c;
-  const spin = new THREE.Vector3(Math.cos(aimYaw) * top, -strafeInput() * 13, -Math.sin(aimYaw) * top);
+  // the bend of the stroke adds sidespin to curl it
+  const top = elev > 0.28 ? -26 : opts.pass ? 0 : 9 * c;
+  const spin = new THREE.Vector3(Math.cos(aimYaw) * top, -(opts.curl ?? 0) * 14, -Math.sin(aimYaw) * top);
   // the ball leaves when the swinging boot reaches it, not when the button is released
-  g.pendingKick = { t: 0.17, dir, speed, spin };
+  g.pendingKick = { t: opts.pass ? 0.14 : 0.17, dir, speed, spin, power: opts.pass ? 0.35 : 0.5 + 0.5 * c };
   if (g.juggling) endJuggle(true);
+}
+
+/** A quick knock-on with one foot: push the ball a few metres ahead and run onto it. */
+function footTouch(side) {
+  if (!g.ballAtFeet(1.0) || g.skill) { g.anim = { t: 0, dur: 0.22, pose: jugglePose('foot'), mirror: side === 'L' }; return; }
+  const f = player.forward(), l = player.left();
+  const lat = side === 'L' ? -0.25 : 0.25; // the outside of each boot nudges it slightly inward
+  ball.kinematic = false;
+  ball.vel.copy(player.vel).addScaledVector(f, 3.4).addScaledVector(l, lat).setY(0);
+  g.poss.has = false; g.poss.regain = 0.28;
+  g.anim = { t: 0, dur: 0.24, pose: kickPose(0.25, 0.42), mirror: side === 'L' };
+  sfx.touch(0.6, ball.pos, camera);
 }
 
 function launchKick() {
@@ -140,6 +182,7 @@ function launchKick() {
   ball.onGround = false;
   g.poss.has = false; g.poss.regain = 0.45;
   g.kickCooldown = 0.35;
+  sfx.kick(k.power, ball.pos, camera);
 }
 
 // plant the standing foot beside the ball, draw the kicking leg back, swing the
@@ -171,7 +214,8 @@ function startJuggle() {
   ball.onGround = false;
   g.anim = { t: 0, dur: 0.28, pose: jugglePose('foot') };
   hud.setJuggle(true, 0);
-  hud.toast('keepy-uppy: tap SPACE as the ball drops', 2.2);
+  sfx.touch(0.5, ball.pos, camera);
+  hud.toast('keepy-uppy: click a foot as the ball drops', 2.2);
 }
 
 function endJuggle(volley) {
@@ -196,7 +240,7 @@ function jugglePose(kind) {
   };
 }
 
-function juggleTouch() {
+function juggleTouch(side = 'R') {
   const f = player.forward();
   const target = player.pos.clone().addScaledVector(f, 0.3);
   const hd = g.hdist(ball.pos, target);
@@ -207,8 +251,9 @@ function juggleTouch() {
     else if (y < 1.1) kind = 'knee';
     else if (y > 1.4 && y < 2.05) kind = 'head';
   }
-  g.anim = { t: 0, dur: 0.26, pose: jugglePose(kind ?? 'foot') };
+  g.anim = { t: 0, dur: 0.26, pose: jugglePose(kind ?? 'foot'), mirror: side === 'L' };
   if (!kind) return;
+  if (kind === 'foot') sfx.touch(0.5, ball.pos, camera); else sfx.body(kind === 'head' ? 'head' : 'thigh', 3, ball.pos, camera);
   const up = { foot: 3.7, knee: 3.1, head: 2.7 }[kind];
   ball.vel.set((target.x - ball.pos.x) * 1.1 + (Math.random() - 0.5) * 0.7, up + Math.random() * 0.35,
     (target.z - ball.pos.z) * 1.1 + (Math.random() - 0.5) * 0.7);
@@ -221,43 +266,63 @@ function juggleTouch() {
 const overlay = document.getElementById('overlay');
 function begin() {
   if (!g.started) { g.started = true; overlay.classList.add('hidden'); }
+  initAudio();
   input.lock();
 }
 overlay.addEventListener('click', begin);
 input.on('wantLock', () => { if (g.started) input.lock(); });
-input.on('lmbDown', () => {
-  if (!g.started || g.skill) return;
-  if (g.juggling) { juggleTouch(); return; }
-  g.charge = 0;
+// Mouse feet: left button = left foot, right button = right foot.
+input.on('footDown', (side) => {
+  if (!g.started) return;
+  initAudio();
+  const other = side === 'L' ? 'R' : 'L';
+  // both buttons together flick the ball up into keepy-uppy (or end it)
+  if (g.press[other] && g.press[other].t < 0.15) {
+    g.press = { L: null, R: null };
+    g.charge = null; hud.setCharge(null);
+    if (g.free.active) g.free.end();
+    if (g.juggling) endJuggle(false); else startJuggle();
+    return;
+  }
+  if (g.juggling) { juggleTouch(side); return; }
+  g.press[side] = { t: 0, charged: false };
+  if (g.free.on) { g.free.start(side); g.poss.has = false; }
 });
-input.on('lmbUp', () => {
-  if (g.charge === null) return;
-  const hold = g.charge;
-  g.charge = null; hud.setCharge(null);
-  kick(hold);
+input.on('footMove', (side, dx, dy, pts) => {
+  if (g.free.active?.side === side) { g.free.move(dx, dy); return; }
+  if (g.press[side]) hud.gesture(pts, '', side);
 });
-input.on('gestureMove', (pts) => hud.gesture(pts));
-input.on('gestureEnd', (pts) => {
-  const r = recognize(pts);
+input.on('footUp', (side, pts, dur) => {
+  const press = g.press[side];
+  g.press[side] = null;
+  if (!press) return;
+  if (g.free.active?.side === side) { g.free.end(); g.poss.regain = 0.12; return; }
+  const r = recognizeFoot(pts, side, dur, press.charged);
   g.lastGesture = { pts, r };
-  hud.gesture(pts, r ? `${r.label}  →  ${SKILLS[r.skill].name}` : 'no move');
-  if (r) startSkill(r.skill, r.side);
+  hud.gesture(pts, r.label, side);
+  if (g.charge?.side === side) { g.charge = null; hud.setCharge(null); }
+  if (r.action === 'tap') footTouch(side);
+  else if (r.action === 'pass') kick(side, { pass: true, speed: THREE.MathUtils.clamp(7 + r.length * 0.03, 7, 16), curl: r.curl * 0.6 });
+  else if (r.action === 'shoot') kick(side, { power: Math.min((press.t - CHARGE_DELAY) / 0.9, 1), curl: r.curl });
+  else startSkill(r.action, r.s);
 });
 input.on('key', (code) => {
   if (!g.started) { if (code === 'Enter') begin(); return; }
+  initAudio();
   switch (code) {
-    case 'KeyQ': startSkill('stepover', nextSide('stepover')); break;
-    case 'KeyE': startSkill('elastico', strafeInput() ? -strafeInput() : nextSide('elastico')); break;
-    case 'KeyR': startSkill('roulette', nextSide('roulette')); break;
-    case 'KeyF': startSkill('rainbow', 1); break;
-    case 'KeyC': startSkill('dragback', nextSide('dragback')); break;
-    case 'KeyZ': startSkill('croqueta', strafeInput() ? -strafeInput() : nextSide('croqueta')); break;
-    case 'KeyX': startSkill('cruyff', strafeInput() ? -strafeInput() : nextSide('cruyff')); break;
-    case 'KeyT': startSkill('soleroll', strafeInput() ? -strafeInput() : nextSide('soleroll')); break;
-    case 'KeyY': startSkill('sombrero', 1); break;
     case 'KeyG': g.juggling ? endJuggle(false) : startJuggle(); break;
+    case 'KeyF':
+      g.free.on = !g.free.on;
+      if (!g.free.on) g.free.end();
+      hud.setFree(g.free.on);
+      hud.toast(g.free.on ? 'free foot: hold a mouse button and move your boot' : 'gesture controls', 1.6);
+      break;
+    case 'KeyK':
+      cam.bob = (cam.bob + 1) % BOB_LEVELS.length;
+      hud.toast(`first person head motion: ${['full', 'half', 'minimal'][cam.bob]}`, 1.2);
+      break;
     case 'Space':
-      if (g.juggling) juggleTouch();
+      if (g.juggling) juggleTouch('R');
       else if (player.pos.y <= 0 && !g.skill) player.vy = 4.0;
       break;
     case 'KeyV':
@@ -292,9 +357,10 @@ function step(dt) {
   cam.pitch = cam.fp ? THREE.MathUtils.clamp(cam.pitch, -1.35, 0.9) : THREE.MathUtils.clamp(cam.pitch, -1.2, 0.45);
   cam.dist = THREE.MathUtils.clamp(cam.dist + input.takeWheel() * 0.4, 2.4, 9);
 
-  // movement (briefly hands-off after a skill so its burst of speed carries you after the ball)
+  // movement keeps going through most skills, so moves happen on the run; a brief
+  // hands-off after a skill lets its burst of speed carry you after the ball
   if (g.escape > 0) g.escape -= dt;
-  else if (!g.skill) {
+  else if (!g.skill || !g.skill.stopsPlayer) {
     const sprinting = input.down('ShiftLeft') || input.down('ShiftRight');
     const fwd = (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
     const str = strafeInput();
@@ -319,7 +385,7 @@ function step(dt) {
       if (g.charge !== null || g.juggling) want = cam.yaw;
       else if (sp > 0.4) want = Math.atan2(player.vel.x, player.vel.z);
       const rate = g.poss.has ? 9 : 12;
-      if (want !== null) player.yaw += angleTo(player.yaw, want) * (1 - Math.exp(-rate * dt));
+      if (want !== null && !g.free.active) player.yaw += angleTo(player.yaw, want) * (1 - Math.exp(-rate * dt));
     }
   }
 
@@ -336,28 +402,49 @@ function step(dt) {
   if (g.skill) {
     g.skillT += dt / g.skill.dur;
     const t = Math.min(g.skillT, 1);
-    g.skill.update(g, g.skillState, t, dt);
-    if (g.skillT >= 1) {
-      const def = g.skill, st = g.skillState;
-      g.skill = null;
-      ball.kinematic = false;
-      const withBall = def.end(g, st);
-      if (withBall) {
-        if (g.skillKey === 'rainbow' || g.skillKey === 'sombrero') g.flicked = 1.8;
-        award(def.points, def.name);
-      } else hud.toast(`${def.name.toLowerCase()} (no ball)`, 0.8);
-      g.poss.regain = g.skillKey === 'rainbow' || g.skillKey === 'sombrero' ? 0.45 : 0.1;
-      g.escape = withBall && g.skillKey !== 'dragback' ? 0.3 : 0;
+    const def = g.skill, st = g.skillState;
+    def.update(g, st, t, dt);
+    // contact sounds at the moments the boot meets the ball
+    while (def.sounds && g.cue < def.sounds.length && t >= def.sounds[g.cue][0]) {
+      const kind = def.sounds[g.cue++][1];
+      if (kind === 'swish') sfx.swish(ball.pos, camera);
+      else if (st.withBall) {
+        if (kind === 'kick') sfx.kick(0.3, ball.pos, camera);
+        else if (kind === 'sole') sfx.sole(ball.pos, camera);
+        else sfx.touch(0.5, ball.pos, camera);
+      }
     }
+    if (g.skillT >= 1) finishSkill();
+  }
+
+  // a foot button held still charges a shot with that foot
+  for (const side of ['L', 'R']) {
+    const pr = g.press[side];
+    if (!pr || g.free.active) continue;
+    pr.t += dt;
+    const st = input.stroke(side);
+    const moved = st ? Math.hypot(st.pts[st.pts.length - 1].x, st.pts[st.pts.length - 1].y) : 0;
+    if (!pr.charged && pr.t > CHARGE_DELAY && moved < 12) { pr.charged = true; g.charge = { side, t: 0 }; }
+  }
+  if (g.charge) { g.charge.t += dt; hud.setCharge(Math.min(g.charge.t / 0.9, 1)); }
+
+  // free foot: the boot follows the mouse; a hand-drawn step over still counts
+  if (g.free.active) {
+    const ev = g.free.update(dt, player.toBody(ball.pos));
+    if (ev === 'stepover') { award(SKILLS.stepover.points, 'Step Over', 'by hand'); sfx.skill(g.combo); }
   }
 
   // short animations
   if (g.anim) { g.anim.t += dt / g.anim.dur; if (g.anim.t >= 1) g.anim = null; }
-  if (g.skill) player.override = () => g.skill.pose(g.skillState, Math.min(g.skillT, 1));
-  else if (g.anim) player.override = () => g.anim.pose(g.anim.t);
+  if (g.skill) {
+    player.override = () => {
+      const p = g.skill.pose(g.skillState, Math.min(g.skillT, 1));
+      return g.skill.mirror && g.skillState.s < 0 ? mirrorPose(p) : p;
+    };
+  } else if (g.anim) player.override = () => (g.anim.mirror ? mirrorPose(g.anim.pose(g.anim.t)) : g.anim.pose(g.anim.t));
+  else if (g.free.active) player.override = () => g.free.pose();
   else player.override = null;
 
-  if (g.charge !== null) { g.charge += dt; hud.setCharge(Math.min(g.charge / 0.9, 1)); }
   if (g.pendingKick && (g.pendingKick.t -= dt) <= 0) launchKick();
 
   g.kickCooldown -= dt;
@@ -368,11 +455,12 @@ function step(dt) {
   ball.step(dt, world.cones);
   for (const e of ball.events) {
     if (e.type === 'goal') {
+      sfx.net(e.speed, ball.pos, camera);
       if (e.topBin) award(1000, 'TOP BIN!', `${Math.round(e.speed * 3.6)} km/h`);
       else award(500, 'GOAL!', `${Math.round(e.speed * 3.6)} km/h`);
       g.goalTimer = 2.4;
-    } else if (e.type === 'woodwork') hud.toast('off the woodwork!', 1.0);
-    else if (e.type === 'bounce' && g.juggling) endJuggle(false);
+    } else if (e.type === 'woodwork') { hud.toast('off the woodwork!', 1.0); sfx.post(e.speed, ball.pos, camera); }
+    else if (e.type === 'bounce') { sfx.bounce(e.speed * 1.6, ball.pos, camera); if (g.juggling) endJuggle(false); }
   }
   ball.events.length = 0;
   if (g.juggling && ball.onGround) endJuggle(false);
@@ -388,7 +476,7 @@ function step(dt) {
 function closeControl(dt) {
   const poss = g.poss;
   ball.controlled = false;
-  if (g.skill || g.juggling || ball.kinematic || ball.inNet) { poss.has = false; return; }
+  if (g.skill || g.juggling || ball.kinematic || ball.inNet || g.free.active) { poss.has = false; return; }
   poss.regain -= dt;
   const f = player.forward();
   const sp = player.speed;
@@ -403,6 +491,7 @@ function closeControl(dt) {
       ball.vel.set(player.vel.x + f.x * 0.4, -0.5, player.vel.z + f.z * 0.4);
       ball.spin.set(0, 0, 0);
       poss.regain = 0.12;
+      sfx.body('chest', 4, ball.pos, camera);
       if (g.flicked > 0) { g.flicked = 0; award(150, 'Clean Control', 'rainbow complete'); }
       else hud.toast('cushioned', 0.6);
       return;
@@ -413,6 +502,7 @@ function closeControl(dt) {
     if (ball.pos.y > 0.45 || d > reach || relV > 14) return;
     poss.has = true;
     poss.cushioned = false;
+    sfx.touch(Math.min(relV / 8, 1), ball.pos, camera);
     if (relV > 6) hud.toast('first touch', 0.6);
   }
 
@@ -423,6 +513,10 @@ function closeControl(dt) {
   const lz = 0.36 + 0.1 * jog + 0.5 * sprint + (0.04 + 0.08 * jog + 0.4 * sprint) * wave;
   const lx = -0.1 + (1 - jog) * 0.035 * Math.sin(player.time * 1.7); // idle sole roll
   const target = player.toWorld(lx, R, lz, tmp);
+  // a soft touch sound once per stride, when the boot meets the ball
+  const cyc = ((player.phase / (Math.PI * 2)) % 1 + 1) % 1;
+  if (sp > 1 && cyc < g.lastCyc) sfx.touch(0.15 + 0.35 * jog + 0.3 * sprint, ball.pos, camera);
+  g.lastCyc = cyc;
 
   const ex = target.x - ball.pos.x, ez = target.z - ball.pos.z;
   if (Math.hypot(ex, ez) > 1.6 || ball.pos.y > 0.6) { poss.has = false; poss.regain = 0.3; return; }
@@ -456,7 +550,8 @@ function bodyCollide() {
 
     // only part of a limb's swing reaches the ball (legs are not rigid), so running
     // into it nudges it on instead of blasting it away
-    _vp.lerpVectors(c.va, c.vb, t).sub(player.vel).multiplyScalar(0.35).add(player.vel);
+    const driven = g.free.active && c.side === g.free.active.side && (c.part === 'foot' || c.part === 'shin');
+    _vp.lerpVectors(c.va, c.vb, t).sub(player.vel).multiplyScalar(driven ? 1 : 0.35).add(player.vel);
     _rel.subVectors(ball.vel, _vp);
     const vn = _rel.dot(_n);
     if (vn >= 0) continue;
@@ -466,7 +561,8 @@ function bodyCollide() {
     ball.spin.addScaledVector(_c.crossVectors(_n, _t), 0.25 * 1.5 / R);
     ball.onGround = false;
     g.lastBump = c.part;
-    if (-vn > 2.5) hud.toast(`off the ${c.part}`, 0.6);
+    if (driven) { g.free.active.touched = true; sfx.touch(Math.min(-vn / 4, 1), ball.pos, camera); }
+    else { sfx.body(c.part, -vn, ball.pos, camera); if (-vn > 2.5) hud.toast(`off the ${c.part}`, 0.6); }
   }
 }
 
@@ -496,16 +592,32 @@ function updateCamera(dt) {
   const third = target.clone().addScaledVector(dir, -cam.dist);
   third.y = Math.max(third.y, 0.25);
 
-  const bob = Math.abs(Math.sin(player.phase)) * 0.025 * Math.min(player.speed / 6, 1);
-  const first = player.pos.clone().addScaledVector(player.forward(), 0.24).setY(player.pos.y + 1.62 + bob);
+  // First person rides the model's head: real head motion from the run and from
+  // every skill, damped so it never jerks, and blended toward a steady eye line by
+  // the comfort setting (K). The camera leans into turns and strafes.
+  // Only the head's motion relative to a steady eye point is damped; the steady point
+  // moves exactly with the player, so the camera never trails behind the head.
+  const f = player.forward();
+  const steady = player.pos.clone().addScaledVector(f, 0.14).setY(player.pos.y + 1.66);
+  const head = player.rig ? player.rig.eyePos(new THREE.Vector3()).addScaledVector(f, 0.14) : steady.clone();
+  const offset = head.sub(steady).multiplyScalar(BOB_LEVELS[cam.bob]);
+  if (!cam.fpOffset) cam.fpOffset = offset.clone();
+  cam.fpOffset.lerp(offset, 1 - Math.exp(-22 * dt));
+  const first = steady.add(cam.fpOffset);
 
   camPos.lerpVectors(third, first, cam.blend);
   camera.position.copy(camPos);
   camera.lookAt(tmp2.copy(camPos).add(dir));
+  const yawRate = angleTo(cam.lastYaw, player.yaw) / Math.max(dt, 1e-3);
+  cam.lastYaw = player.yaw;
+  const side = player.vel.dot(player.left());
+  const rollWant = THREE.MathUtils.clamp(yawRate * 0.025 + side * 0.012, -0.1, 0.1) * BOB_LEVELS[cam.bob];
+  cam.roll += (rollWant - cam.roll) * (1 - Math.exp(-6 * dt));
+  camera.rotateZ(cam.roll * cam.blend);
   player.setFirstPerson(cam.blend > 0.6);
 
   const sprint = Math.min(Math.max(player.speed - 5, 0) / 2.4, 1);
-  const fov = (cam.fp ? 72 : 62) + sprint * 6;
+  const fov = (cam.fp ? 78 : 62) + sprint * 6;
   cam.fov += (fov - cam.fov) * (1 - Math.exp(-6 * dt));
   camera.fov = cam.fov;
   camera.updateProjectionMatrix();

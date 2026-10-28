@@ -23,7 +23,7 @@
       <span class="dot"></span>
       <div>
         <div class="title">SOLO BALLER</div>
-        <div class="meta">prototype 0.4</div>
+        <div class="meta">prototype 0.5</div>
       </div>
     </div>
 
@@ -45,37 +45,39 @@
       <div class="head"><span>controls</span><kbd>H</kbd></div>
       <div class="body">
         <div class="group">
+          <div class="sub">left button = left foot, right button = right foot</div>
+          <div class="row"><kbd>tap</kbd><span>knock it on</span></div>
+          <div class="row"><kbd>&uarr;</kbd><span>flick forward: pass (bend it to curl)</span></div>
+          <div class="row"><kbd>hold</kbd><span>hold still, then release: shot</span></div>
+          <div class="row"><kbd>&#8635;</kbd><span>circle: step over</span></div>
+          <div class="row"><kbd>&#8978;</kbd><span>half circle: roulette</span></div>
+          <div class="row"><kbd>&harr;</kbd><span>fast swipe out: elastico, in: la croqueta</span></div>
+          <div class="row"><kbd>&harr;</kbd><span>slow drag sideways: sole roll</span></div>
+        </div>
+        <div class="group">
+          <div class="sub">more strokes</div>
+          <div class="row"><kbd>&darr;</kbd><span>pull back: drag back</span></div>
+          <div class="row"><kbd>&darr;&rarr;</kbd><span>L-shape: cruyff turn</span></div>
+          <div class="row"><kbd>&darr;&uarr;</kbd><span>down-up: rainbow flick</span></div>
+          <div class="row"><kbd>&uarr;&darr;</kbd><span>up-down: sombrero flick</span></div>
+          <div class="row"><kbd>both</kbd><span>both buttons: keepy-uppy, then click a foot</span></div>
+          <div class="row"><kbd>F</kbd><span>free foot: your boot follows the mouse</span></div>
+        </div>
+        <div class="group">
+          <div class="sub">keys</div>
           <div class="row"><kbd>WASD</kbd><span>move</span></div>
           <div class="row"><kbd>Shift</kbd><span>sprint</span></div>
-          <div class="row"><kbd>Mouse</kbd><span>look / aim</span></div>
-          <div class="row"><kbd>Click</kbd><span>tap pass, hold to shoot (A/D curls)</span></div>
-          <div class="row"><kbd>Space</kbd><span>jump / juggle touch</span></div>
+          <div class="row"><kbd>Mouse</kbd><span>look / aim (no button held)</span></div>
+          <div class="row"><kbd>Space</kbd><span>jump</span></div>
           <div class="row"><kbd>V</kbd><span>first / third person</span></div>
+          <div class="row"><kbd>K</kbd><span>first person head motion</span></div>
           <div class="row"><kbd>B</kbd><span>ball to feet</span></div>
-        </div>
-        <div class="group">
-          <div class="row"><kbd>Q</kbd><span>step over</span></div>
-          <div class="row"><kbd>E</kbd><span>elastico</span></div>
-          <div class="row"><kbd>R</kbd><span>roulette</span></div>
-          <div class="row"><kbd>F</kbd><span>rainbow flick</span></div>
-          <div class="row"><kbd>C</kbd><span>drag back</span></div>
-          <div class="row"><kbd>Z</kbd><span>la croqueta</span></div>
-          <div class="row"><kbd>X</kbd><span>cruyff turn</span></div>
-          <div class="row"><kbd>T</kbd><span>sole roll</span></div>
-          <div class="row"><kbd>Y</kbd><span>sombrero flick</span></div>
-          <div class="row"><kbd>G</kbd><span>keepy-uppy</span></div>
-        </div>
-        <div class="group">
-          <div class="sub">hold right mouse and draw</div>
-          <div class="row"><kbd>&larr; &rarr;</kbd><span>elastico</span></div>
-          <div class="row"><kbd>&uarr;</kbd><span>rainbow flick</span></div>
-          <div class="row"><kbd>&darr;</kbd><span>drag back</span></div>
-          <div class="row"><kbd>&#8635;</kbd><span>roulette</span></div>
-          <div class="row"><kbd>&#8767;</kbd><span>step over</span></div>
+          <div class="row"><kbd>G</kbd><span>keepy-uppy on / off</span></div>
         </div>
       </div>
     </div>
 
+    <div id="free" class="card">FREE FOOT &middot; F</div>
     <div id="mode" class="card">3RD PERSON</div>
   </div>
 
@@ -87,9 +89,9 @@
       <p>Just you, a ball and a pitch. Dribble, juggle, pull off skills and bend one into the top bin.</p>
       <div class="cols">
         <div><kbd>WASD</kbd> move &nbsp; <kbd>Shift</kbd> sprint</div>
-        <div><kbd>Click</kbd> pass / hold to shoot</div>
-        <div><kbd>Q E R F C Z X T Y</kbd> skills &nbsp; <kbd>G</kbd> juggle</div>
-        <div><kbd>Right mouse</kbd> draw a gesture</div>
+        <div><kbd>Left mouse</kbd> left foot &nbsp; <kbd>Right mouse</kbd> right foot</div>
+        <div>Hold a foot and draw: flick up to pass, circle to step over</div>
+        <div>Hold a foot still, then release, to shoot &nbsp; <kbd>F</kbd> free foot</div>
         <div><kbd>V</kbd> first / third person &nbsp; <kbd>H</kbd> all controls</div>
       </div>
       <button id="play">Click to play</button>

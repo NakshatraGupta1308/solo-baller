@@ -1,11 +1,13 @@
-// Keyboard, mouse look, pointer lock and right-button gesture capture.
+// Keyboard, mouse look, pointer lock and the two mouse "feet": the left button is
+// the left foot and the right button is the right foot. While a button is held,
+// mouse movement belongs to that foot (a stroke) instead of the camera.
 
 export function createInput(canvas) {
   const keys = new Set();
   const handlers = {};
   let lookX = 0, lookY = 0, wheel = 0;
-  let gesture = null;
   let settleUntil = 0;
+  const feet = { L: null, R: null }; // active stroke per foot: { pts, t0 }
   const emit = (name, ...a) => handlers[name]?.(...a);
 
   const locked = () => document.pointerLockElement === canvas;
@@ -17,30 +19,42 @@ export function createInput(canvas) {
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
-  window.addEventListener('blur', () => keys.clear());
+  window.addEventListener('blur', () => { keys.clear(); for (const s of ['L', 'R']) if (feet[s]) up(s); });
+
+  const sideOf = (button) => (button === 0 ? 'L' : button === 2 ? 'R' : null);
+  function up(side) {
+    const f = feet[side];
+    feet[side] = null;
+    emit('footUp', side, f.pts, (performance.now() - f.t0) / 1000);
+  }
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('mousedown', (e) => {
     if (!locked() && e.button === 0) emit('wantLock');
-    if (e.button === 0) emit('lmbDown');
-    if (e.button === 2) { gesture = [{ x: 0, y: 0 }]; emit('gestureStart'); }
+    const side = sideOf(e.button);
+    if (!side) return;
+    feet[side] = { pts: [{ x: 0, y: 0, t: 0 }], t0: performance.now() };
+    emit('footDown', side);
   });
   window.addEventListener('mouseup', (e) => {
-    if (e.button === 0) emit('lmbUp');
-    if (e.button === 2 && gesture) { const g = gesture; gesture = null; emit('gestureEnd', g); }
+    const side = sideOf(e.button);
+    if (side && feet[side]) up(side);
   });
-  window.addEventListener('mousemove', (e) => {
+  // Chrome batches mousemove to the next animation frame but delivers mouseup at once,
+  // so a quick flick could lose its last movement. pointerrawupdate is unbatched.
+  const rawMoves = 'onpointerrawupdate' in window;
+  window.addEventListener(rawMoves ? 'pointerrawupdate' : 'mousemove', (e) => {
+    // skip the jump some browsers report right after locking, and spurious spikes
     if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return;
-    if (gesture) {
-      const last = gesture[gesture.length - 1];
-      gesture.push({ x: last.x + e.movementX, y: last.y + e.movementY });
-      emit('gestureMove', gesture);
+    const active = feet.R ? 'R' : feet.L ? 'L' : null;
+    if (active) {
+      const f = feet[active];
+      const last = f.pts[f.pts.length - 1];
+      f.pts.push({ x: last.x + e.movementX, y: last.y + e.movementY, t: (performance.now() - f.t0) / 1000 });
+      emit('footMove', active, e.movementX, e.movementY, f.pts);
       return;
     }
-    // skip the jump some browsers report right after locking, and spurious spikes
-    if (locked() && performance.now() > settleUntil) {
-      lookX += e.movementX; lookY += e.movementY;
-    }
+    if (locked() && performance.now() > settleUntil) { lookX += e.movementX; lookY += e.movementY; }
   });
   document.addEventListener('pointerlockchange', () => { settleUntil = performance.now() + 120; });
   canvas.addEventListener('wheel', (e) => { wheel += Math.sign(e.deltaY); e.preventDefault(); }, { passive: false });
@@ -49,6 +63,8 @@ export function createInput(canvas) {
     keys,
     on(name, fn) { handlers[name] = fn; },
     down: (code) => keys.has(code),
+    held: (side) => !!feet[side],
+    stroke: (side) => feet[side],
     locked,
     takeLook() { const r = [lookX, lookY]; lookX = 0; lookY = 0; return r; },
     takeWheel() { const w = wheel; wheel = 0; return w; },

@@ -90,6 +90,8 @@ kbd {
 }
 
 #mode { right: 16px; bottom: 16px; padding: 8px 12px; font-size: 11px; letter-spacing: 0.12em; }
+#free { right: 16px; bottom: 56px; padding: 6px 10px; font-size: 10px; letter-spacing: 0.14em; display: none; background: var(--accent); color: #fff; border-color: var(--accent-deep); }
+#free.show { display: block; }
 #mode::after { content: '  \00B7  V'; color: var(--accent-deep); }
 
 /* start sheet */

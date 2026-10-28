@@ -8,7 +8,8 @@ export function createHud() {
   const mode = $('mode'), juggle = $('juggle'), juggleN = $('juggle-n');
   const reticle = $('reticle'), feed = $('feed');
   const trail = $('trail'), tctx = trail.getContext('2d');
-  let popTimer = 0, toastTimer = 0, trailPts = null, trailFade = 0, trailLabel = '';
+  let popTimer = 0, toastTimer = 0, trailPts = null, trailFade = 0, trailLabel = '', trailSide = 'R';
+  const free = $('free');
 
   function resize() {
     const dpr = Math.min(devicePixelRatio, 2);
@@ -24,13 +25,17 @@ export function createHud() {
     const cx = innerWidth / 2, cy = innerHeight / 2;
     tctx.globalAlpha = Math.min(trailFade, 1);
     tctx.lineCap = 'round'; tctx.lineJoin = 'round';
-    tctx.strokeStyle = 'rgba(24,176,90,0.9)';
+    // left foot draws in ink on the left half, right foot in green on the right half
+    const ox = trailSide === 'L' ? -innerWidth * 0.12 : innerWidth * 0.12;
+    const tint = trailSide === 'L' ? '28,31,29' : '24,176,90';
+    tctx.translate(ox, 0);
+    tctx.strokeStyle = `rgba(${tint},0.9)`;
     tctx.lineWidth = 4;
     tctx.beginPath();
     trailPts.forEach((p, i) => (i ? tctx.lineTo(cx + p.x, cy + p.y) : tctx.moveTo(cx + p.x, cy + p.y)));
     tctx.stroke();
     const last = trailPts[trailPts.length - 1];
-    tctx.fillStyle = '#18B05A';
+    tctx.fillStyle = `rgb(${tint})`;
     tctx.beginPath(); tctx.arc(cx + last.x, cy + last.y, 6, 0, Math.PI * 2); tctx.fill();
     tctx.beginPath(); tctx.arc(cx, cy, 4, 0, Math.PI * 2); tctx.strokeStyle = 'rgba(28,31,29,0.6)'; tctx.lineWidth = 1.5; tctx.stroke();
     if (trailLabel) {
@@ -39,6 +44,7 @@ export function createHud() {
       tctx.fillText(trailLabel.toUpperCase(), cx + last.x + 12, cy + last.y - 10);
     }
     tctx.globalAlpha = 1;
+    tctx.translate(-ox, 0);
   }
 
   return {
@@ -71,7 +77,8 @@ export function createHud() {
     },
     setMode(fp) { mode.textContent = fp ? '1ST PERSON' : '3RD PERSON'; reticle.classList.toggle('fp', fp); },
     setJuggle(on, n = 0) { juggle.classList.toggle('show', on); juggleN.textContent = n; },
-    gesture(pts, label = '') { trailPts = pts; trailFade = 1.4; trailLabel = label; },
+    gesture(pts, label = '', side = 'R') { trailPts = pts; trailFade = 1.4; trailLabel = label; trailSide = side; },
+    setFree(on) { free.classList.toggle('show', on); },
     update(dt) {
       if (popTimer > 0 && (popTimer -= dt) <= 0) pop.className = '';
       if (toastTimer > 0 && (toastTimer -= dt) <= 0) toast.classList.remove('show');

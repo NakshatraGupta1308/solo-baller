@@ -52,10 +52,9 @@ export const SKILLS = {
   // Right foot lifts inside the ball, circles over the top of it and lands wide on
   // the outside, selling the move that way; you then burst off the other way.
   stepover: {
-    name: 'Step Over', points: 100, dur: 0.66,
+    name: 'Step Over', points: 100, dur: 0.62, sounds: [[0.45, 'swish']],
     start(g, s) { return { g, s, withBall: g.ballAtFeet(1.1) }; },
     update(g, st, t, dt) {
-      g.player.vel.multiplyScalar(Math.exp(-3.5 * dt));
       if (st.withBall) g.holdBall(g.player.toWorld(-0.03 * st.s, R, 0.46), dt, t);
     },
     end(g, st) {
@@ -83,14 +82,13 @@ export const SKILLS = {
   // Outside of the right foot pushes the ball out, the foot wraps around it, and the
   // inside snaps it back across the body.
   elastico: {
-    name: 'Elastico', points: 200, dur: 0.58,
+    name: 'Elastico', points: 200, dur: 0.54, sounds: [[0.14, 'touch'], [0.46, 'swish'], [0.56, 'touch']],
     ballAt(s, t) {
       const lx = t < 0.4 ? -0.04 - 0.28 * easeOut(t / 0.4) : -0.32 + 0.9 * easeIn((t - 0.4) / 0.6);
       return [lx * s, R, 0.44 + 0.12 * t];
     },
     start(g, s) { return { g, s, withBall: g.ballAtFeet(1.0) }; },
     update(g, st, t, dt) {
-      g.player.vel.multiplyScalar(Math.exp(-2.5 * dt));
       if (st.withBall) g.holdBall(g.player.toWorld(...this.ballAt(st.s, t)), dt, t);
     },
     end(g, st) {
@@ -123,11 +121,11 @@ export const SKILLS = {
   // Marseille turn: right sole drags the ball as you spin, then the left sole takes
   // over to finish the turn.
   roulette: {
-    name: 'Roulette', points: 250, dur: 0.88,
+    name: 'Roulette', points: 250, dur: 0.82, sounds: [[0.1, 'sole'], [0.55, 'sole']],
     start(g, s) { return { g, s, withBall: g.ballAtFeet(1.1) }; },
     update(g, st, t, dt) {
       const { player } = g;
-      player.vel.copy(player.left().multiplyScalar(-st.s * 1.2)).addScaledVector(player.forward(), 1.3);
+      player.vel.copy(player.left().multiplyScalar(-st.s * 1.2)).addScaledVector(player.forward(), Math.max(1.3, st.fwd * 0.6));
       if (!st.withBall) return;
       const th = st.s * Math.PI * 2 * ease(t);
       const x0 = THREE.MathUtils.lerp(-0.05, 0.05, ease(span(t, 0.42, 0.58))), z0 = 0.33;
@@ -158,15 +156,15 @@ export const SKILLS = {
   // Left foot steps in front of the ball, the right foot rolls it up the back of the
   // left calf, and the left heel flicks it over your head.
   rainbow: {
-    name: 'Rainbow Flick', points: 300, dur: 0.86,
-    start(g) { return { g, withBall: g.ballAtFeet(1.0), released: false }; },
+    name: 'Rainbow Flick', points: 300, dur: 0.82, mirror: true, sounds: [[0.12, 'sole'], [0.38, 'kick']],
+    start(g, s) { return { g, s, withBall: g.ballAtFeet(1.0), released: false }; },
     update(g, st, t, dt) {
       const { player, ball } = g;
       if (!st.withBall || st.released) return;
       if (t < 0.36) {
         // drawn back under the right sole, then rolled up the back of the left calf
         const back = ease(span(t, 0.08, 0.24)), up = ease(span(t, 0.22, 0.36));
-        g.holdBall(player.toWorld(-0.04 + 0.1 * back, R + 0.26 * Math.pow(up, 1.3), 0.42 - 0.12 * back), dt, t);
+        g.holdBall(player.toWorld((-0.04 + 0.1 * back) * st.s, R + 0.26 * Math.pow(up, 1.3), 0.42 - 0.12 * back), dt, t);
       } else {
         st.released = true;
         ball.kinematic = false;
@@ -195,19 +193,19 @@ export const SKILLS = {
 
   // Sole on the ball, drag it back under you and turn to face it.
   dragback: {
-    name: 'Drag Back', points: 120, dur: 0.62,
+    name: 'Drag Back', points: 120, dur: 0.56, stopsPlayer: true, sounds: [[0.1, 'sole']],
     start(g, s) {
       const { player } = g;
       return { g, s, withBall: g.ballAtFeet(1.0), yaw0: player.yaw, f0: player.forward(), l0: player.left() };
     },
     update(g, st, t, dt) {
       const { player, ball } = g;
-      player.vel.multiplyScalar(Math.exp(-8 * dt));
+      player.vel.multiplyScalar(Math.exp(-5 * dt));
       const yaw = st.yaw0 + st.s * Math.PI * ease(span(t, 0.28, 0.95));
       g.turnPlayer(yaw - player.yaw);
       if (!st.withBall) return;
       const p = player.pos.clone().addScaledVector(st.f0, 0.42 - 0.95 * ease(span(t, 0.08, 0.75)))
-        .addScaledVector(st.l0, -0.06).setY(R);
+        .addScaledVector(st.l0, -0.06 * st.s).setY(R);
       g.holdBall(p, dt, t);
     },
     end(g, st) {
@@ -219,10 +217,10 @@ export const SKILLS = {
     },
     pose(st, t) {
       const on = ease(span(t, 0.02, 0.1)) * (1 - ease(span(t, 0.72, 0.84)));
-      const b = st.withBall ? ballBody(st.g) : [-0.06, R, 0.4];
-      const footR = lerp3(REST_R, [b[0], b[1] + R + 0.05, b[2] - 0.04], on);
+      const b = st.withBall ? mx(ballBody(st.g), st.s) : [-0.06, R, 0.4];
+      const act = lerp3(REST_R, [b[0], b[1] + R + 0.05, b[2] - 0.04], on);
       return {
-        w: env(t, 0.06, 0.14), footR, footL: [0.14, A, 0.06],
+        w: env(t, 0.06, 0.14), ...feet(st.s, act, [0.14, A, 0.06]),
         drop: 0.06, spineX: 0.25, spineY: st.s * 0.25 * bell(t), ...arms(0.6),
       };
     },
@@ -231,12 +229,12 @@ export const SKILLS = {
   // La Croqueta: the inside of one foot pushes the ball across to the other foot,
   // which carries it on. Quick, flat, sideways.
   croqueta: {
-    name: 'La Croqueta', points: 180, dur: 0.5,
+    name: 'La Croqueta', points: 180, dur: 0.46, sounds: [[0.1, 'touch'], [0.58, 'touch']],
     ballAt(t) { return [-0.06 + 0.42 * ease(span(t, 0.06, 0.55)), R, 0.42 + 0.14 * ease(span(t, 0.55, 1))]; },
     start(g, s) { return { g, s, withBall: g.ballAtFeet(1.0) }; },
     update(g, st, t, dt) {
       const { player } = g;
-      player.vel.copy(player.left().multiplyScalar(st.s * 1.9)).addScaledVector(player.forward(), 1.2);
+      player.vel.copy(player.left().multiplyScalar(st.s * 1.9)).addScaledVector(player.forward(), Math.max(1.2, st.fwd * 0.8));
       if (st.withBall) g.holdBall(player.toWorld(...mx(this.ballAt(t), st.s)), dt, t);
     },
     end(g, st) {
@@ -266,14 +264,14 @@ export const SKILLS = {
   // Cruyff turn: shape to shoot, then drag the ball behind your standing leg with the
   // inside of the foot and turn away with it.
   cruyff: {
-    name: 'Cruyff Turn', points: 160, dur: 0.82,
+    name: 'Cruyff Turn', points: 160, dur: 0.74, stopsPlayer: true, sounds: [[0.44, 'touch'], [0.6, 'sole']],
     start(g, s) {
       const { player } = g;
       return { g, s, withBall: g.ballAtFeet(1.0), yaw0: player.yaw, f0: player.forward(), l0: player.left() };
     },
     update(g, st, t, dt) {
       const { player } = g;
-      player.vel.multiplyScalar(Math.exp(-7 * dt));
+      player.vel.multiplyScalar(Math.exp(-4 * dt));
       g.turnPlayer(st.yaw0 + st.s * 2.36 * ease(span(t, 0.52, 0.96)) - player.yaw);
       if (!st.withBall) return;
       const u = ease(span(t, 0.4, 0.66));
@@ -310,12 +308,12 @@ export const SKILLS = {
   // Sole roll: right sole on top of the ball rolls it across in front of you while
   // you shuffle sideways with it.
   soleroll: {
-    name: 'Sole Roll', points: 120, dur: 0.64,
+    name: 'Sole Roll', points: 120, dur: 0.58, sounds: [[0.1, 'sole'], [0.45, 'sole']],
     ballAt(t) { return [-0.06 + 0.44 * ease(span(t, 0.08, 0.88)), R, 0.36]; },
     start(g, s) { return { g, s, withBall: g.ballAtFeet(1.0) }; },
     update(g, st, t, dt) {
       const { player } = g;
-      player.vel.copy(player.left()).multiplyScalar(st.s * 1.1 * bell(t) + 0.0);
+      player.vel.copy(player.left()).multiplyScalar(st.s * 1.1 * bell(t)).addScaledVector(player.forward(), st.fwd * 0.5);
       if (st.withBall) g.holdBall(player.toWorld(...mx(this.ballAt(t), st.s)), dt, t);
     },
     end(g, st) {
@@ -338,15 +336,14 @@ export const SKILLS = {
   // Sombrero flick: get the toe under the ball, lift it onto the boot and flick it up
   // over a defender's head, then run onto it.
   sombrero: {
-    name: 'Sombrero Flick', points: 280, dur: 0.64,
-    start(g) { return { g, withBall: g.ballAtFeet(1.0), released: false }; },
+    name: 'Sombrero Flick', points: 280, dur: 0.6, mirror: true, sounds: [[0.26, 'touch'], [0.4, 'kick']],
+    start(g, s) { return { g, s, withBall: g.ballAtFeet(1.0), released: false }; },
     update(g, st, t, dt) {
       const { player, ball } = g;
-      player.vel.multiplyScalar(Math.exp(-2 * dt));
       if (!st.withBall || st.released) return;
       if (t < 0.38) {
         const u = ease(span(t, 0.24, 0.38));
-        g.holdBall(player.toWorld(-0.04, R + 0.15 * u, 0.44 - 0.04 * u), dt, t);
+        g.holdBall(player.toWorld(-0.04 * st.s, R + 0.15 * u, 0.44 - 0.04 * u), dt, t);
       } else {
         st.released = true;
         ball.kinematic = false;
@@ -369,71 +366,25 @@ export const SKILLS = {
   },
 };
 
-// Mouse gestures, drawn while holding the right button.
-// Returns { skill, side, label } or null.
-export function recognize(raw) {
-  if (raw.length < 3) return null;
-  let L = 0;
-  for (let i = 1; i < raw.length; i++) L += Math.hypot(raw[i].x - raw[i - 1].x, raw[i].y - raw[i - 1].y);
-  if (L < 40) return null;
-
-  // resample to evenly spaced points
-  const N = 32, step = L / (N - 1), pts = [raw[0]];
-  let acc = 0;
-  for (let i = 1; i < raw.length && pts.length < N; i++) {
-    let a = raw[i - 1];
-    const b = raw[i];
-    let d = Math.hypot(b.x - a.x, b.y - a.y);
-    while (acc + d >= step && pts.length < N) {
-      const t = (step - acc) / d;
-      a = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-      pts.push(a);
-      d = Math.hypot(b.x - a.x, b.y - a.y);
-      acc = 0;
-    }
-    acc += d;
-  }
-  while (pts.length < N) pts.push(raw[raw.length - 1]);
-
-  let turn = 0, rev = 0, lastSx = 0, firstSx = 0, lastAng = null;
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (let i = 0; i < N; i++) {
-    minX = Math.min(minX, pts[i].x); maxX = Math.max(maxX, pts[i].x);
-    minY = Math.min(minY, pts[i].y); maxY = Math.max(maxY, pts[i].y);
-    // sum the turning between segments, skipping near-zero ones whose direction is noise
-    if (i >= 1) {
-      const sx = pts[i].x - pts[i - 1].x, sy = pts[i].y - pts[i - 1].y;
-      if (Math.hypot(sx, sy) > step * 0.3) {
-        const a = Math.atan2(sy, sx);
-        if (lastAng !== null) {
-          let da = a - lastAng;
-          while (da > Math.PI) da -= Math.PI * 2;
-          while (da < -Math.PI) da += Math.PI * 2;
-          turn += da;
-        }
-        lastAng = a;
-      }
-    }
-  }
-  for (let i = 3; i < N; i += 3) {
-    const dx = pts[i].x - pts[i - 3].x;
-    if (Math.abs(dx) < step * 0.8) continue;
-    const sx = Math.sign(dx);
-    if (!firstSx) firstSx = sx;
-    if (lastSx && sx !== lastSx) rev++;
-    lastSx = sx;
-  }
-  const w = maxX - minX, h = maxY - minY;
-  const dx = pts[N - 1].x - pts[0].x, dy = pts[N - 1].y - pts[0].y;
-
-  if (Math.abs(turn) > 4.2) {
-    const s = turn > 0 ? 1 : -1;
-    return { skill: 'roulette', side: s, label: s > 0 ? 'circle  ↻' : 'circle  ↺' };
-  }
-  if (rev >= 2 && w > h * 0.8) return { skill: 'stepover', side: firstSx > 0 ? 1 : -1, label: 'zig-zag' };
-  if (Math.abs(dx) > Math.abs(dy)) {
-    return { skill: 'elastico', side: dx > 0 ? -1 : 1, label: dx > 0 ? 'swipe →' : 'swipe ←' };
-  }
-  if (dy < 0) return { skill: 'rainbow', side: 1, label: 'flick ↑' };
-  return { skill: 'dragback', side: 1, label: 'pull ↓' };
+/**
+ * Mirror a pose left to right: swaps the feet and limbs and flips sideways values.
+ * Used for moves authored only for the right foot (flagged \`mirror: true\`).
+ */
+export function mirrorPose(p) {
+  const o = { ...p };
+  const swap = (a, b, f = (v) => v) => {
+    const A1 = p[a], B1 = p[b];
+    if (B1 === undefined) delete o[a]; else o[a] = f(B1);
+    if (A1 === undefined) delete o[b]; else o[b] = f(A1);
+  };
+  swap('footL', 'footR', (v) => mx(v, -1));
+  swap('pitchL', 'pitchR');
+  swap('hipL', 'hipR');
+  swap('hipLz', 'hipRz', (v) => -v);
+  swap('kneeL', 'kneeR');
+  swap('shL', 'shR');
+  swap('shLz', 'shRz', (v) => -v);
+  swap('elL', 'elR');
+  for (const k of ['spineZ', 'spineY', 'yaw']) if (k in p) o[k] = -p[k];
+  return o;
 }

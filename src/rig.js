@@ -73,8 +73,6 @@ export async function loadRig(url, parent) {
     bones[key] = model.getObjectByName('mixamorig' + name);
     if (!bones[key]) throw new Error(`model is missing bone ${name}`);
   }
-  // in first person everything above the shorts is clipped away so only the legs show
-  const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0.8);
   const materials = [];
   model.traverse((o) => {
     if (o.isSkinnedMesh) {
@@ -117,7 +115,7 @@ export async function loadRig(url, parent) {
   parent.add(model);
 
   const colliders = COLLIDERS.map(([from, to, r, part]) => ({
-    from: bones[from], to: to && bones[to], r, part,
+    from: bones[from], to: to && bones[to], r, part, side: from.endsWith('L') ? 'L' : from.endsWith('R') ? 'R' : null,
     a: new THREE.Vector3(), b: new THREE.Vector3(), va: new THREE.Vector3(), vb: new THREE.Vector3(),
   }));
   let primed = false;
@@ -160,13 +158,13 @@ export async function loadRig(url, parent) {
         if (primed && dt > 0) c.vb.subVectors(c.b, prev).divideScalar(dt);
       }
       primed = true;
-      clip.constant = groundY + 0.8;
     },
-    setFirstPerson(fp) {
-      for (const m of materials) {
-        const want = fp ? [clip] : null;
-        if ((m.clippingPlanes?.length ?? 0) !== (fp ? 1 : 0)) { m.clippingPlanes = want; m.needsUpdate = true; }
-      }
+    // first person: only the head is folded away, so looking down shows your own
+    // shoulders, chest, legs and boots
+    setFirstPerson(fp) { bones.head.scale.setScalar(fp ? 0.001 : 1); },
+    /** World position between the eyes (the head bone sits at the base of the skull). */
+    eyePos(out = new THREE.Vector3()) {
+      return bones.head.getWorldPosition(out).add(new THREE.Vector3(0, 0.08, 0));
     },
   };
 }
