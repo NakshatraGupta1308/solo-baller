@@ -105,6 +105,15 @@ export async function loadRig(url, parent) {
   const parentScale = bones.hips.parent.getWorldScale(new THREE.Vector3()).y / model.getWorldScale(new THREE.Vector3()).y;
   const dropDir = new THREE.Vector3(0, -1, 0).applyQuaternion(rest.hips.Pinv).divideScalar(parentScale);
 
+  // leg measurements for the IK, in character space at rest
+  const wp = (b) => b.getWorldPosition(new THREE.Vector3());
+  const dims = {
+    hipX: Math.abs(wp(bones.upLegL).x),
+    hipY: wp(bones.upLegL).y,
+    L1: wp(bones.upLegL).distanceTo(wp(bones.legL)),
+    L2: wp(bones.legL).distanceTo(wp(bones.footL)),
+  };
+
   parent.add(model);
 
   const colliders = COLLIDERS.map(([from, to, r, part]) => ({
@@ -123,13 +132,14 @@ export async function loadRig(url, parent) {
 
   return {
     model,
+    dims,
     apply(p) {
       set('upLegL', p.hipL, 0, p.hipLz);
       set('upLegR', p.hipR, 0, p.hipRz);
       set('legL', p.kneeL, 0, 0);
       set('legR', p.kneeR, 0, 0);
-      set('footL', -p.kneeL * 0.3, 0, 0);
-      set('footR', -p.kneeR * 0.3, 0, 0);
+      set('footL', p.footLx, 0, 0);
+      set('footR', p.footRx, 0, 0);
       set('armL', p.shL + 0.12, 0, p.shLz + 0.08);
       set('armR', p.shR + 0.12, 0, p.shRz - 0.08);
       set('foreArmL', p.elL * 0.8, 0, 0);

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createWorld } from './world.js';
 import { createBall } from './ball.js';
 import { createPlayer } from './player.js';
-import { SKILLS, recognize } from './skills.js';
+import { SKILLS, recognize, track } from './skills.js';
 import { createInput } from './input.js';
 import { createHud } from './hud.js';
 
@@ -46,7 +46,8 @@ const g = {
   score: 0, combo: 1, comboTimer: 0,
   flicked: 0, escape: 0,
   poss: { has: false, regain: 0, show: 0, cushioned: false }, // close control: is the ball glued to your feet
-  side: { stepover: 1, elastico: 1, roulette: 1, dragback: 1 },
+  side: { stepover: 1, elastico: 1, roulette: 1, dragback: 1, croqueta: 1, cruyff: 1, soleroll: 1 },
+  pendingKick: null,
 
   hdist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); },
   front(out = new THREE.Vector3()) { return player.toWorld(-0.04, 0, 0.42, out); },
@@ -87,7 +88,7 @@ function award(points, title, sub) {
 
 // ---------------------------------------------------------------- actions
 function startSkill(key, side) {
-  if (!g.started || g.skill || g.juggling || ball.inNet) return;
+  if (!g.started || g.skill || g.juggling || g.pendingKick || ball.inNet) return;
   const def = SKILLS[key];
   g.skill = def; g.skillKey = key; g.skillT = 0;
   const d = tmp.subVectors(ball.pos, player.pos);
@@ -108,7 +109,8 @@ function kick(hold) {
   const contact = player.pos.clone().addScaledVector(f, 0.42);
   const reach = g.poss.has || (g.hdist(ball.pos, contact) < 0.9 && ball.pos.y < 1.0 && !ball.kinematic && !ball.inNet);
   const c = Math.min(hold / 0.9, 1);
-  g.anim = { t: 0, dur: 0.38, pose: kickPose(hold < 0.16 ? 0.5 : 0.7 + 0.3 * c) };
+  const bz = THREE.MathUtils.clamp(player.toBody(ball.pos).z, 0.3, 0.6);
+  g.anim = { t: 0, dur: 0.38, pose: kickPose(hold < 0.16 ? 0.45 : 0.7 + 0.3 * c, bz) };
   if (!reach) { hud.toast('too far from the ball', 0.8); return; }
 
   let speed, elev;
@@ -119,27 +121,42 @@ function kick(hold) {
     elev = THREE.MathUtils.clamp(0.03 + 0.07 * c + Math.max(0, cam.pitch - base) * 0.7, 0.02, 0.85);
   }
   const dir = new THREE.Vector3(Math.sin(aimYaw) * Math.cos(elev), Math.sin(elev), Math.cos(aimYaw) * Math.cos(elev));
-  ball.vel.copy(dir).multiplyScalar(speed).addScaledVector(player.vel, 0.25);
-  if (ball.pos.y < R + 0.02) ball.pos.y = R + 0.01;
   // lofted shots get backspin (they float and check up), driven ones a little topspin (they dip);
   // holding A or D adds sidespin to curl it
   const top = elev > 0.28 ? -26 : hold < 0.16 ? 0 : 9 * c;
-  ball.spin.set(Math.cos(aimYaw) * top, -strafeInput() * 13, -Math.sin(aimYaw) * top);
-  ball.onGround = false;
-  g.poss.has = false; g.poss.regain = 0.45;
-  g.kickCooldown = 0.35;
+  const spin = new THREE.Vector3(Math.cos(aimYaw) * top, -strafeInput() * 13, -Math.sin(aimYaw) * top);
+  // the ball leaves when the swinging boot reaches it, not when the button is released
+  g.pendingKick = { t: 0.17, dir, speed, spin };
   if (g.juggling) endJuggle(true);
 }
 
-function kickPose(power) {
+function launchKick() {
+  const k = g.pendingKick;
+  g.pendingKick = null;
+  if (ball.inNet || ball.kinematic || g.hdist(ball.pos, player.pos) > 1.3) return;
+  ball.vel.copy(k.dir).multiplyScalar(k.speed).addScaledVector(player.vel, 0.25);
+  if (ball.pos.y < R + 0.02) ball.pos.y = R + 0.01;
+  ball.spin.copy(k.spin);
+  ball.onGround = false;
+  g.poss.has = false; g.poss.regain = 0.45;
+  g.kickCooldown = 0.35;
+}
+
+// plant the standing foot beside the ball, draw the kicking leg back, swing the
+// ankle through the ball and follow through
+function kickPose(power, bz) {
+  const A = 0.08;
+  const keys = [
+    [0, -0.11, A, 0.04], [0.3, -0.14, 0.18 + 0.2 * power, -0.08 - 0.3 * power],
+    [0.45, -0.06, 0.12, bz - 0.1], [0.68, -0.02, 0.3 + 0.4 * power, 0.55 + 0.3 * power], [1, -0.11, A, 0.08],
+  ];
   return (t) => {
-    const wind = t < 0.35, strike = t >= 0.35 && t < 0.6;
-    const w = Math.min(t / 0.1, 1) * Math.min((1 - t) / 0.2, 1);
+    const w = Math.min(t / 0.12, 1) * Math.min((1 - t) / 0.22, 1);
+    const strike = Math.sin(Math.PI * THREE.MathUtils.clamp((t - 0.3) / 0.45, 0, 1));
     return {
-      w,
-      hipR: wind ? 0.6 * power * (t / 0.35) : strike ? -1.1 * power : -0.6 * power,
-      kneeR: wind ? 1.4 * (t / 0.35) : strike ? 0.15 : 0.3,
-      hipL: 0.1, kneeL: 0.2, shLz: 0.7, shRz: -0.3, shL: -0.4, spineX: strike ? -0.05 : 0.15,
+      w, footR: track(keys, t), footL: [0.2, A, bz - 0.1], pitchR: 0.5 * strike,
+      drop: 0.06, spineX: 0.2 - 0.25 * strike, spineY: -0.35 * strike + 0.2 * (t < 0.35 ? t / 0.35 : 0),
+      shLz: 0.8, shRz: -0.3, shL: -0.4 * strike, shR: 0.3 * strike, elL: -0.5, elR: -0.6,
     };
   };
 }
@@ -174,8 +191,8 @@ function jugglePose(kind) {
   return (t) => {
     const b = Math.sin(Math.PI * Math.min(t, 1));
     if (kind === 'head') return { w: b, spineX: -0.25 + 0.4 * b, drop: -0.04 * b, shLz: 0.4, shRz: -0.4 };
-    if (kind === 'knee') return { w: b, hipR: -1.5, kneeR: 1.7, shLz: 0.5, shRz: -0.5 };
-    return { w: b, hipR: -0.6, kneeR: 0.45, shLz: 0.45, shRz: -0.45 };
+    if (kind === 'knee') return { w: b, hipR: -1.5, kneeR: 1.7, footR: [-0.08, 0.6, 0.3], shLz: 0.5, shRz: -0.5 };
+    return { w: b, footR: [-0.07, 0.1 + 0.32 * b, 0.32], pitchR: -0.25 * b, footL: [0.12, 0.08, 0.02], drop: 0.04, shLz: 0.45, shRz: -0.45 };
   };
 }
 
@@ -234,6 +251,10 @@ input.on('key', (code) => {
     case 'KeyR': startSkill('roulette', nextSide('roulette')); break;
     case 'KeyF': startSkill('rainbow', 1); break;
     case 'KeyC': startSkill('dragback', nextSide('dragback')); break;
+    case 'KeyZ': startSkill('croqueta', strafeInput() ? -strafeInput() : nextSide('croqueta')); break;
+    case 'KeyX': startSkill('cruyff', strafeInput() ? -strafeInput() : nextSide('cruyff')); break;
+    case 'KeyT': startSkill('soleroll', strafeInput() ? -strafeInput() : nextSide('soleroll')); break;
+    case 'KeyY': startSkill('sombrero', 1); break;
     case 'KeyG': g.juggling ? endJuggle(false) : startJuggle(); break;
     case 'Space':
       if (g.juggling) juggleTouch();
@@ -322,10 +343,10 @@ function step(dt) {
       ball.kinematic = false;
       const withBall = def.end(g, st);
       if (withBall) {
-        if (g.skillKey === 'rainbow') g.flicked = 1.8;
+        if (g.skillKey === 'rainbow' || g.skillKey === 'sombrero') g.flicked = 1.8;
         award(def.points, def.name);
       } else hud.toast(`${def.name.toLowerCase()} (no ball)`, 0.8);
-      g.poss.regain = g.skillKey === 'rainbow' ? 0.45 : 0.1;
+      g.poss.regain = g.skillKey === 'rainbow' || g.skillKey === 'sombrero' ? 0.45 : 0.1;
       g.escape = withBall && g.skillKey !== 'dragback' ? 0.3 : 0;
     }
   }
@@ -337,6 +358,7 @@ function step(dt) {
   else player.override = null;
 
   if (g.charge !== null) { g.charge += dt; hud.setCharge(Math.min(g.charge / 0.9, 1)); }
+  if (g.pendingKick && (g.pendingKick.t -= dt) <= 0) launchKick();
 
   g.kickCooldown -= dt;
   g.flicked -= dt;
@@ -494,6 +516,7 @@ const clock = new THREE.Clock();
 let acc = 0;
 const FIXED = 1 / 120;
 function frame() {
+  if (g.paused) { requestAnimationFrame(frame); return; } // set from the console or tests to freeze time
   const dt = Math.min(clock.getDelta(), 0.1);
   acc += dt;
   while (acc >= FIXED) { step(FIXED); acc -= FIXED; }
@@ -509,4 +532,8 @@ function frame() {
 requestAnimationFrame(frame);
 
 // handy for debugging from the console
-window.__game = { g, ball, player, cam, input, step, startSkill, kick, resetBall, startJuggle, juggleTouch };
+window.__game = {
+  g, ball, player, cam, input, step, startSkill, kick, resetBall, startJuggle, juggleTouch,
+  // draw one frame without advancing time (pair with g.paused)
+  render() { updateCamera(1 / 60); world.update(0, camera, ball, player); renderer.render(scene, camera); },
+};
