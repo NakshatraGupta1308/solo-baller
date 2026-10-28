@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solo Baller</title>
+  <meta name="description" content="A casual 3D solo football skills game. Dribble, juggle and pull off skills with the keyboard or mouse gestures.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <canvas id="trail"></canvas>
+  <div id="grain"></div>
+
+  <div id="hud">
+    <div id="brand" class="card">
+      <span class="dot"></span>
+      <div>
+        <div class="title">SOLO BALLER</div>
+        <div class="meta">prototype 0.1</div>
+      </div>
+    </div>
+
+    <div id="stats" class="card">
+      <div class="stat"><span class="k">score</span><span class="v" id="score">0</span></div>
+      <div class="stat combo"><span class="k">combo</span><span class="v" id="combo">x1</span><i class="bar"></i></div>
+      <div class="stat"><span class="k">best juggle</span><span class="v" id="best">0</span></div>
+    </div>
+
+    <ul id="feed"></ul>
+
+    <div id="reticle"><i></i></div>
+    <div id="pop"><div id="pop-title"></div><div id="pop-sub"></div></div>
+    <div id="toast"></div>
+    <div id="juggle"><span id="juggle-n">0</span><span class="k">touches</span></div>
+    <div id="charge"><span class="k">power</span><div class="track"><div id="charge-fill"></div></div></div>
+
+    <div id="help" class="card collapsed">
+      <div class="head"><span>controls</span><kbd>H</kbd></div>
+      <div class="body">
+        <div class="group">
+          <div class="row"><kbd>WASD</kbd><span>move</span></div>
+          <div class="row"><kbd>Shift</kbd><span>sprint</span></div>
+          <div class="row"><kbd>Mouse</kbd><span>look / aim</span></div>
+          <div class="row"><kbd>Click</kbd><span>tap pass, hold to shoot (A/D curls)</span></div>
+          <div class="row"><kbd>Space</kbd><span>jump / juggle touch</span></div>
+          <div class="row"><kbd>V</kbd><span>first / third person</span></div>
+          <div class="row"><kbd>B</kbd><span>ball to feet</span></div>
+        </div>
+        <div class="group">
+          <div class="row"><kbd>Q</kbd><span>step over</span></div>
+          <div class="row"><kbd>E</kbd><span>elastico</span></div>
+          <div class="row"><kbd>R</kbd><span>roulette</span></div>
+          <div class="row"><kbd>F</kbd><span>rainbow flick</span></div>
+          <div class="row"><kbd>C</kbd><span>drag back</span></div>
+          <div class="row"><kbd>G</kbd><span>keepy-uppy</span></div>
+        </div>
+        <div class="group">
+          <div class="sub">hold right mouse and draw</div>
+          <div class="row"><kbd>&larr; &rarr;</kbd><span>elastico</span></div>
+          <div class="row"><kbd>&uarr;</kbd><span>rainbow flick</span></div>
+          <div class="row"><kbd>&darr;</kbd><span>drag back</span></div>
+          <div class="row"><kbd>&#8635;</kbd><span>roulette</span></div>
+          <div class="row"><kbd>&#8767;</kbd><span>step over</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="mode" class="card">3RD PERSON</div>
+  </div>
+
+  <div id="overlay">
+    <div class="sheet">
+      <div class="crop tl"></div><div class="crop tr"></div><div class="crop bl"></div><div class="crop br"></div>
+      <div class="eyebrow">a casual football sandbox</div>
+      <h1>Solo<br>Baller<span>.</span></h1>
+      <p>Just you, a ball and a pitch. Dribble, juggle, pull off skills and bend one into the top bin.</p>
+      <div class="cols">
+        <div><kbd>WASD</kbd> move &nbsp; <kbd>Shift</kbd> sprint</div>
+        <div><kbd>Click</kbd> pass / hold to shoot</div>
+        <div><kbd>Q E R F C</kbd> skills &nbsp; <kbd>G</kbd> juggle</div>
+        <div><kbd>Right mouse</kbd> draw a gesture</div>
+        <div><kbd>V</kbd> first / third person &nbsp; <kbd>H</kbd> all controls</div>
+      </div>
+      <button id="play">Click to play</button>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
