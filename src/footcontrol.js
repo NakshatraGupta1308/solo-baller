@@ -106,7 +106,9 @@ export function recognizeFoot(raw, side, dur, charged) {
   }
   if (dy > Math.abs(dx)) return { action: 'dragback', s: fs, label: `pull back: ${foot} drag back` };
   const inward = dx * out < 0;
-  const speed = L / Math.max(dur, 0.05);
+  // speed over the moving part of the stroke only (not the moment before it starts)
+  const moveTime = raw.length > 2 && raw[raw.length - 1].t !== undefined ? raw[raw.length - 1].t - raw[1].t : dur;
+  const speed = L / Math.max(moveTime, 0.05);
   if (speed > 450) {
     return inward
       ? { action: 'croqueta', s: fs, label: 'swipe in: la croqueta' }

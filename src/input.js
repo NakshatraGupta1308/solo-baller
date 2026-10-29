@@ -46,6 +46,7 @@ export function createInput(canvas) {
   window.addEventListener(rawMoves ? 'pointerrawupdate' : 'mousemove', (e) => {
     // skip the jump some browsers report right after locking, and spurious spikes
     if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return;
+    if (!e.movementX && !e.movementY) return; // raw pointer updates also fire with no movement
     const active = feet.R ? 'R' : feet.L ? 'L' : null;
     if (active) {
       const f = feet[active];

@@ -7,6 +7,7 @@ import { createInput } from './input.js';
 import { createHud } from './hud.js';
 import { recognizeFoot, createFreeFoot } from './footcontrol.js';
 import { initAudio, sfx } from './audio.js';
+import { loadClips, sampleClip, rootAt, mirrored } from './clips.js';
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -56,6 +57,7 @@ const g = {
   press: { L: null, R: null }, // foot buttons held: { t, charged }
   free: createFreeFoot(),
   lastCyc: 0,
+  clip: null,          // keyframed animation playing: see playClip
 
   hdist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); },
   front(out = new THREE.Vector3()) { return player.toWorld(-0.04, 0, 0.42, out); },
@@ -96,7 +98,7 @@ function award(points, title, sub) {
 
 // ---------------------------------------------------------------- actions
 function startSkill(key, side) {
-  if (!g.started || g.juggling || g.pendingKick || ball.inNet) return;
+  if (!g.started || g.juggling || g.pendingKick || g.clip || ball.inNet) return;
   if (g.skill) {
     // late in a move, cut straight into the next one; earlier, remember it for later
     if (g.skillT > 0.55) finishSkill(); else { g.queued = [key, side]; return; }
@@ -157,6 +159,11 @@ function kick(side, opts) {
   const spin = new THREE.Vector3(Math.cos(aimYaw) * top, -(opts.curl ?? 0) * 14, -Math.sin(aimYaw) * top);
   // the ball leaves when the swinging boot reaches it, not when the button is released
   g.pendingKick = { t: opts.pass ? 0.14 : 0.17, dir, speed, spin, power: opts.pass ? 0.35 : 0.5 + 0.5 * c };
+  // shots play the keyframed strike (authored for the left foot); the ball leaves on its touch frame
+  if (!opts.pass && !g.juggling && playClip('shot', side === 'R', { ball: 'carry', onTouch: () => launchKick() })) {
+    g.anim = null;
+    g.pendingKick.t = Infinity;
+  }
   if (g.juggling) endJuggle(true);
 }
 
@@ -205,6 +212,7 @@ function kickPose(power, bz) {
 }
 
 function startJuggle() {
+  if (g.clip) return;
   if (!g.ballAtFeet(0.6)) { hud.toast('get the ball at your feet first'); return; }
   g.juggling = true; g.juggles = 0;
   g.poss.has = false;
@@ -338,6 +346,7 @@ input.on('key', (code) => {
 
 function resetBall() {
   if (g.juggling) endJuggle(false);
+  g.clip = null;
   ball.kinematic = false;
   ball.place(player.toWorld(-0.04, R, 0.45));
   g.poss.has = true; g.poss.regain = 0;
@@ -360,6 +369,7 @@ function step(dt) {
   // movement keeps going through most skills, so moves happen on the run; a brief
   // hands-off after a skill lets its burst of speed carry you after the ball
   if (g.escape > 0) g.escape -= dt;
+  else if (g.clip) { /* root motion from the clip moves the player */ }
   else if (!g.skill || !g.skill.stopsPlayer) {
     const sprinting = input.down('ShiftLeft') || input.down('ShiftRight');
     const fwd = (input.down('KeyW') ? 1 : 0) - (input.down('KeyS') ? 1 : 0);
@@ -367,6 +377,7 @@ function step(dt) {
     const cf = tmp.set(Math.sin(cam.yaw), 0, Math.cos(cam.yaw));
     const wish = new THREE.Vector3(-cf.z, 0, cf.x).multiplyScalar(str).addScaledVector(cf, fwd);
     if (wish.lengthSq() > 1) wish.normalize();
+    if (!cam.fp) maybeTurn(wish);
     const max = g.juggling ? 2.2 : g.charge !== null ? 3.2
       : g.poss.has ? (sprinting ? 7.2 : 4.8) : (sprinting ? 7.6 : 5.2);
     const target = wish.multiplyScalar(max);
@@ -377,7 +388,7 @@ function step(dt) {
   }
 
   // facing
-  if (!g.skill) {
+  if (!g.skill && !g.clip) {
     if (cam.fp) player.yaw = cam.yaw;
     else {
       const sp = Math.hypot(player.vel.x, player.vel.z);
@@ -397,6 +408,7 @@ function step(dt) {
   }
   player.pos.x += player.vel.x * dt;
   player.pos.z += player.vel.z * dt;
+  clipStep(dt);
 
   // skill
   if (g.skill) {
@@ -444,6 +456,7 @@ function step(dt) {
   } else if (g.anim) player.override = () => (g.anim.mirror ? mirrorPose(g.anim.pose(g.anim.t)) : g.anim.pose(g.anim.t));
   else if (g.free.active) player.override = () => g.free.pose();
   else player.override = null;
+  player.clipLayer = g.clip ? clipLayer : null;
 
   if (g.pendingKick && (g.pendingKick.t -= dt) <= 0) launchKick();
 
@@ -470,13 +483,147 @@ function step(dt) {
   hud.setCombo(g.combo, Math.max(g.comboTimer / 2.6, 0));
 }
 
+// ---------------------------------------------------------------- keyframed clips
+// Football animations converted from Gameplay Football (see tools/gf-anims). A clip
+// drives the whole body and, through its root motion, the player's position. Ball
+// contact happens on the clip's recorded touch frame: a ball at your feet is eased
+// onto the touch spot so the boot meets it exactly.
+let CLIPS = null;
+loadClips().then((c) => { CLIPS = c; }).catch((err) => console.warn('animation clips failed to load', err));
+
+const FADE_IN = 8, FADE_OUT = 12; // frames
+const _clipPose = { joints: {}, root: new THREE.Vector3() };
+const _yawFix = new THREE.Quaternion();
+const _up = new THREE.Vector3(0, 1, 0);
+
+/** Start a clip. opts.ball: 'carry' (ball at feet, guided to the touch), 'trap' (incoming ball). */
+function playClip(name, mirror, opts = {}) {
+  if (!CLIPS || !player.rig || g.clip) return false;
+  const clip = CLIPS[name];
+  const info = mirrored(clip, mirror);
+  const yaw0 = player.yaw;
+  const c = { name, clip, mirror, info, yaw0, f: 0, touched: false, handed: false, ballFrom: null, ...opts };
+  // world origin of clip space, so that root(0) lands on the player
+  const r0 = rootAt(clip, 0); if (mirror) r0.x = -r0.x;
+  c.origin = player.pos.clone().sub(clipToWorldDir(c, r0.x, r0.z));
+  c.origin.y = 0;
+  g.clip = c;
+  g.poss.has = false;
+  g.anim = null;
+  return true;
+}
+
+function clipToWorldDir(c, x, z) {
+  const s = Math.sin(c.yaw0), co = Math.cos(c.yaw0);
+  return new THREE.Vector3(x * co + z * s, 0, -x * s + z * co);
+}
+function clipToWorld(c, p) { return c.origin.clone().add(clipToWorldDir(c, p[0], p[2])).setY(p[1]); }
+
+function clipStep(dt) {
+  const c = g.clip;
+  if (!c) return;
+  const clip = c.clip;
+  c.f += dt * 100;
+  const f = Math.min(c.f, clip.frames);
+
+  // root motion: the clip's travel moves the player, so the feet do not slide
+  const r = rootAt(clip, f); if (c.mirror) r.x = -r.x;
+  const p = c.origin.clone().add(clipToWorldDir(c, r.x, r.z));
+  player.vel.set((p.x - player.pos.x) / dt, 0, (p.z - player.pos.z) / dt);
+  player.pos.x = p.x; player.pos.z = p.z;
+
+  // hand a turn over to the player's own heading as the clip fades out
+  if (!c.handed && c.info.turn && f >= clip.frames - FADE_OUT) {
+    c.handed = true;
+    g.turnPlayer(c.info.turn);
+  }
+
+  // guide the ball onto the touch spot, then play the contact
+  const t = c.info.touch;
+  if (t && !c.touched) {
+    const spot = clipToWorld(c, t.pos);
+    if (c.ball === 'carry') {
+      if (!c.ballFrom) c.ballFrom = ball.pos.clone();
+      const u = Math.min(f / t.frame, 1);
+      ball.setKinematic(c.ballFrom.clone().lerp(spot, u * u * (3 - 2 * u)), dt);
+    } else if (c.ball === 'trap' && f >= t.frame - 4 && ball.pos.distanceTo(spot) < 0.9) {
+      ball.setKinematic(ball.pos.clone().lerp(spot, 0.5), dt); // last few frames: settle it onto the boot
+    }
+    if (f >= t.frame) {
+      c.touched = true;
+      ball.kinematic = false;
+      c.onTouch?.(spot);
+    }
+  }
+  if (c.f >= clip.frames) endClip();
+}
+
+function endClip() {
+  const c = g.clip;
+  g.clip = null;
+  ball.kinematic = false;
+  if (c.ball === 'carry' && c.name !== 'shot') { g.poss.regain = 0; }
+  if (c.ball === 'trap' && c.trapped) { g.poss.has = true; }
+}
+
+// Sharp change of direction while dribbling (third person): a keyframed turn on the ball.
+function maybeTurn(wish) {
+  if (g.clip || g.skill || !g.poss.has || g.juggling || g.free.active || wish.lengthSq() < 0.5) return;
+  if (player.speed > 5.6) return;
+  const a = angleTo(player.yaw, Math.atan2(wish.x, wish.z));
+  if (Math.abs(a) < 1.25) return;
+  const big = Math.abs(a) > 2.4;
+  const name = big ? 'turn180' : 'turn90';
+  // the 90 turn goes right with the right foot; mirror it to go left
+  const mirror = big ? a < 0 : a > 0;
+  const speed = big ? 2.6 : 3.2;
+  playClip(name, mirror, {
+    ball: 'carry',
+    onTouch: () => {
+      const yaw = g.clip.yaw0 + g.clip.info.turn;
+      ball.vel.set(Math.sin(yaw) * speed, 0, Math.cos(yaw) * speed);
+      sfx.touch(0.6, ball.pos, camera);
+      g.poss.regain = 0.15;
+    },
+  });
+}
+
+// A loose ball rolling at you from the front: a keyframed first-touch trap, started
+// so that the boot reaches the ball on the clip's touch frame.
+function maybeTrap() {
+  if (!CLIPS || !player.rig || g.clip || cam.fp) return false;
+  if (ball.pos.y > 0.35 || g.poss.regain > 0 || g.kickCooldown > 0) return false;
+  const to = tmp2.subVectors(player.pos, ball.pos).setY(0);
+  const d = to.length();
+  const rel = new THREE.Vector3(ball.vel.x - player.vel.x, 0, ball.vel.z - player.vel.z);
+  const closing = rel.dot(to) / Math.max(d, 1e-3);
+  if (closing < 1.8 || d > 6) return false;
+  // time until the ball reaches the touch spot just in front of the boot
+  const tTouch = CLIPS.trap.touch.frame / 100;
+  const eta = (d - CLIPS.trap.touch.pos[2] - R) / closing;
+  if (eta > tTouch + 0.08 || eta < tTouch - 0.1) return false;
+  // pick the foot on the side the ball is arriving, then face it
+  const side = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw)).dot(tmp.subVectors(ball.pos, player.pos));
+  player.yaw = Math.atan2(-to.x, -to.z);
+  return playClip('trap', side > 0.02, {
+    ball: 'trap',
+    onTouch: (spot) => {
+      if (ball.pos.distanceTo(spot) > 0.9) return; // misjudged: let it run
+      g.clip.trapped = true;
+      ball.place(spot.setY(R), player.vel.clone().multiplyScalar(0.3));
+      sfx.touch(0.8, ball.pos, camera);
+      hud.toast('first touch', 0.6);
+    },
+  });
+}
+
 // Close control. While you have the ball a soft spring holds it just ahead of your
 // boot; the touch distance pulses with your stride and grows when sprinting. A loose
 // ball is collected when it comes within reach, and dropping balls are cushioned.
 function closeControl(dt) {
   const poss = g.poss;
   ball.controlled = false;
-  if (g.skill || g.juggling || ball.kinematic || ball.inNet || g.free.active) { poss.has = false; return; }
+  if (g.skill || g.clip || g.juggling || ball.kinematic || ball.inNet || g.free.active) { if (!g.clip) poss.has = false; return; }
   poss.regain -= dt;
   const f = player.forward();
   const sp = player.speed;
@@ -496,6 +643,7 @@ function closeControl(dt) {
       else hud.toast('cushioned', 0.6);
       return;
     }
+    if (maybeTrap()) return;
     const d = g.hdist(ball.pos, g.front(tmp2));
     const relV = Math.hypot(ball.vel.x - player.vel.x, ball.vel.z - player.vel.z);
     const reach = 0.7 + Math.min(sp, 7) * 0.05;
@@ -534,7 +682,7 @@ const BODY_BOUNCE = { head: 0.6, chest: 0.3, body: 0.3, thigh: 0.42, shin: 0.48,
 const _ab = new THREE.Vector3(), _c = new THREE.Vector3(), _n = new THREE.Vector3();
 const _vp = new THREE.Vector3(), _rel = new THREE.Vector3(), _t = new THREE.Vector3();
 function bodyCollide() {
-  if (g.skill || g.poss.has || g.juggling || ball.kinematic || g.kickCooldown > 0) return;
+  if (g.skill || g.clip || g.poss.has || g.juggling || ball.kinematic || g.kickCooldown > 0) return;
   const cols = player.rig?.colliders;
   if (!cols) return bodyBlock();
   for (const c of cols) {
@@ -644,8 +792,19 @@ function frame() {
 requestAnimationFrame(frame);
 
 // handy for debugging from the console
+// what the player's rig blends in on top of the procedural pose while a clip plays
+function clipLayer() {
+  const c = g.clip;
+  if (!c) return null;
+  const f = Math.min(c.f, c.clip.frames);
+  sampleClip(c.clip, f, c.mirror, _clipPose);
+  const w = Math.min(f / FADE_IN, 1) * Math.min((c.clip.frames - f) / FADE_OUT + 0.0001, 1);
+  const yawFix = c.handed ? _yawFix.setFromAxisAngle(_up, -c.info.turn) : null;
+  return { sample: _clipPose, w: Math.max(w, 0), yawFix };
+}
+
 window.__game = {
-  g, ball, player, cam, input, step, startSkill, kick, resetBall, startJuggle, juggleTouch,
+  g, ball, player, cam, input, step, startSkill, kick, resetBall, startJuggle, juggleTouch, playClip,
   // draw one frame without advancing time (pair with g.paused)
   render() { updateCamera(1 / 60); world.update(0, camera, ball, player); renderer.render(scene, camera); },
 };

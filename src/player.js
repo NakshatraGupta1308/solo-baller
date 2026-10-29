@@ -223,6 +223,7 @@ export function createPlayer(scene) {
     override: null, // pose function from the active skill
     bodyYaw: 0,
     rig: null, // the loaded 3D model; the mannequin stands in until it arrives
+    clipLayer: null, // returns a keyframed clip pose to blend over the procedural one
 
     forward(out = new THREE.Vector3()) { return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); },
     left(out = new THREE.Vector3()) { return out.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)); },
@@ -255,7 +256,11 @@ export function createPlayer(scene) {
       }
       pose = smoothPose(this, pose, dt);
 
-      if (this.rig) this.rig.apply(pose);
+      if (this.rig) {
+        this.rig.apply(pose);
+        const layer = this.clipLayer?.();
+        if (layer) this.rig.applyClip(layer.sample, layer.w, layer.yawFix);
+      }
       const [L, Rl] = legs;
       L.top.rotation.set(pose.hipL, 0, pose.hipLz);
       Rl.top.rotation.set(pose.hipR, 0, pose.hipRz);

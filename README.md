@@ -70,6 +70,16 @@ The camera rides the player's head, so you feel the real stride and every skill,
 
 The legs are driven by inverse kinematics: every move places the ankles where they need to be (on top of the ball, wrapped around it, passing over it) and the hips and knees follow. The step over genuinely circles the boot over the ball from the inside to the outside, the elastico pushes with the outside of the boot and wraps around to snap it back with the inside, the roulette drags with each sole in turn, and the rainbow rolls the ball up the back of the standing calf before the heel flicks it over. Running uses planted feet that stay put on the grass, with a lifted swing, hip bob, arm pump and a counter-twisting torso, and every joint is smoothed so poses blend instead of snapping. Shots connect when the swinging boot reaches the ball.
 
+### Keyframed football animations
+
+Some actions use real football animations from Gameplay Football, the open-source game that Google Research Football is built on (released into the public domain):
+
+- **First-touch trap**: a ball rolling at you from the front is killed dead under your boot, with the trap timed so the boot meets the ball on the animation's own contact frame.
+- **Dribble turns**: in third person, ask for a sharp change of direction while you have the ball (more than about 70 degrees) and you turn 90 degrees, or all the way round, with the ball on your boot.
+- **Shots**: the striking leg, plant foot, arms and body come from the animation, and the ball leaves on its contact frame.
+
+Each clip is mirrored for the other foot or direction, moves the player with its own root motion (so the feet do not slide) and blends in and out over the procedural pose. The IK skills stay as they are.
+
 ### Close control
 
 When the ball is at your feet a thin green ring appears under it. While you have it, the ball stays glued just ahead of your boot: small touches in rhythm with your steps when jogging, bigger touches when sprinting, and it stops under your sole when you stop. You only give it up when you pass, shoot, flick it or start juggling, and loose balls are collected as soon as they come within reach. Balls dropping from the air (like your own rainbow flick) are cushioned down to your feet.
@@ -90,6 +100,8 @@ Skills chain into combos (up to x5) if you land the next one within a couple of 
 - `src/skills.js`: each skill's ball path, spline foot paths for both feet, body motion, release and sound cues, plus a left/right pose mirror.
 - `src/footcontrol.js`: the per-foot stroke recogniser and free foot mode.
 - `src/audio.js`: synthesised sound effects (Web Audio).
+- `src/clips.js`: loads and samples the keyframed football animations (interpolation, mirroring, root motion, touch frames).
+- `tools/gf-anims/convert.py`: converts Gameplay Football `.anim` files (in `tools/gf-anims/source/`) into the JSON clips in `assets/anims/`.
 - `src/main.js`: the fixed-step game loop, mouse-foot wiring, skill chaining, close control (a stride-synced spring that keeps the ball at your feet), first touch and cushioning, shooting, keepy-uppy, scoring and the cameras.
 
 The visual style (paper white, graph lines, a single green accent) is inspired by graph-paper construction sheets.
@@ -106,6 +118,7 @@ The visual style (paper white, graph lines, a single green accent) is inspired b
 
 - Player model: the "X Bot" character from [Mixamo](https://www.mixamo.com), as distributed with the [three.js examples](https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf). The kit colours are applied in code.
 - [three.js](https://threejs.org) and its glTF loader, MIT licensed (see `vendor/three.LICENSE`).
+- Football animations (trap, turns, shot) from [Gameplay Football](https://github.com/BazkieBumpercar/GameplayFootball) by Bastiaan Konings Schuiling, as included in [Google Research Football](https://github.com/google-research/football), released under the Unlicense (see `tools/gf-anims/source/LICENSE`).
 
 ## Using your own player model
 

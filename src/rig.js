@@ -11,12 +11,20 @@ import { PALETTE } from './world.js';
 // P^-1 * R * P * L.
 
 const BONES = {
-  hips: 'Hips', spine: 'Spine', spine1: 'Spine1', spine2: 'Spine2', head: 'Head',
+  hips: 'Hips', spine: 'Spine', spine1: 'Spine1', spine2: 'Spine2', neck: 'Neck', head: 'Head',
   upLegL: 'LeftUpLeg', legL: 'LeftLeg', footL: 'LeftFoot', toeL: 'LeftToeBase',
   upLegR: 'RightUpLeg', legR: 'RightLeg', footR: 'RightFoot', toeR: 'RightToeBase',
   armL: 'LeftArm', foreArmL: 'LeftForeArm', handL: 'LeftHand',
   armR: 'RightArm', foreArmR: 'RightForeArm', handR: 'RightHand',
 };
+
+// clip joint -> rig bone. The clip has one spine joint ("middle"); it drives the lower spine.
+const CLIP_BONES = [
+  ['body', 'hips'], ['middle', 'spine'], ['neck', 'neck'],
+  ['left_shoulder', 'armL'], ['left_elbow', 'foreArmL'], ['right_shoulder', 'armR'], ['right_elbow', 'foreArmR'],
+  ['left_thigh', 'upLegL'], ['left_knee', 'legL'], ['left_ankle', 'footL'],
+  ['right_thigh', 'upLegR'], ['right_knee', 'legR'], ['right_ankle', 'footR'],
+];
 
 // Capsules the ball can bounce off: [from bone, to bone, radius, part]. The head
 // capsule runs from the head bone to a point just above it.
@@ -122,6 +130,7 @@ export async function loadRig(url, parent) {
   const prev = new THREE.Vector3();
 
   const e = new THREE.Euler(), q = new THREE.Quaternion();
+  const cq = new THREE.Quaternion(), target = new THREE.Quaternion(), hipPos = new THREE.Vector3();
   function set(key, x, y, z) {
     const r = rest[key];
     q.setFromEuler(e.set(x, y, z));
@@ -147,6 +156,27 @@ export async function loadRig(url, parent) {
       bones.hips.position.copy(rest.hips.pos).addScaledVector(dropDir, p.drop);
     },
     colliders,
+    /**
+     * Layer a keyframed clip pose over the current pose. sample.joints holds local
+     * rotations in character axes (the clip skeleton's rest is the same straight,
+     * arms-down stand), sample.root.y is how far the hips sit below standing height.
+     * w blends from the current pose (0) to the clip (1); yawFix (optional) is a
+     * world-up rotation applied to the pelvis, used to hand a turn over to the player.
+     */
+    applyClip(sample, w, yawFix) {
+      if (w <= 0) return;
+      for (const [joint, key] of CLIP_BONES) {
+        const src = sample.joints[joint];
+        if (!src) continue;
+        const r = rest[key];
+        cq.copy(src);
+        if (joint === 'body' && yawFix) cq.premultiply(yawFix);
+        target.copy(r.Pinv).multiply(cq).multiply(r.P).multiply(r.L);
+        bones[key].quaternion.slerp(target, w);
+      }
+      hipPos.copy(rest.hips.pos).addScaledVector(dropDir, -sample.root.y);
+      bones.hips.position.lerp(hipPos, w);
+    },
     // world-space capsules and their velocities, after the pose and root are placed
     update(dt, groundY) {
       model.updateMatrixWorld(true);
